@@ -1,0 +1,134 @@
+name: Release
+
+# Release v<Version> mit "Wake-on-LAN-<Version>.zip" ("Wake on LAN.exe" + Liesmich.txt).
+# Release-Seite: oben "Änderungen" (Punkte aus dem Commit-Text zur Version), darunter die Installation.
+# - Run workflow (Versionsnummer) oder Tag v<Version>: Release anlegen; gibt es es schon,
+#   wird nichts neu gebaut, nur der Release-Text aufgefrischt.
+# - Änderung dieser Datei auf main: Release-Texte aller vorhandenen Releases auffrischen.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release.yml'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, z. B. 1.9.2026.1101'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ganze Historie, um den Commit zur Version zu finden
+
+      - name: Versionen bestimmen
+        id: ver
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $existing = @(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName --jq '.[].tagName' | ForEach-Object { $_.TrimStart('v') })
+          $new = ''
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') { $v = '${{ github.event.inputs.version }}'.TrimStart('v') }
+          elseif ('${{ github.ref_type }}' -eq 'tag') { $v = '${{ github.ref_name }}'.TrimStart('v') }
+          else { $v = '' }   # Änderung des Workflows: nur Texte auffrischen
+          if ($v) {
+            if ($v -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw "Ungültige Version: $v" }
+            if ($existing -notcontains $v) { $new = $v }
+          }
+          $refresh = if ($v) { @($existing | Where-Object { $_ -eq $v }) } else { $existing }
+          "new=$new" >> $env:GITHUB_OUTPUT
+          "refresh=$($refresh -join ' ')" >> $env:GITHUB_OUTPUT
+          Write-Host "Neu: '$new' / Text auffrischen: '$($refresh -join ' ')'"
+
+      - name: Release-Texte erstellen
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()   # Umlaute aus git richtig lesen
+          New-Item -ItemType Directory -Path 'notes' -Force | Out-Null
+          $all = @('${{ steps.ver.outputs.new }}') + ('${{ steps.ver.outputs.refresh }}' -split ' ') | Where-Object { $_ }
+          foreach ($ver in $all) {
+            # "Änderungen" = Zeilen mit "- " aus dem neuesten Commit, dessen Text die Version nennt
+            $sha = git log --format=%H -F --grep="$ver" -n 1
+            if (-not $sha) { $sha = git rev-parse HEAD }
+            $body = git log -1 --format=%b $sha
+            $items = @($body -split "`r?`n" | Where-Object { $_ -match '^\s*[-*] ' } | ForEach-Object { '- ' + ($_.Trim() -replace '^[-*]\s+', '') })
+            if ($items.Count -eq 0) { $items = @('- siehe Liesmich.txt') }
+            # Texte mit Variablen ohne typografische Anführungszeichen (sonst ParserError in "…")
+            $lines = @('## Änderungen', '') + $items + @(
+              '',
+              '## Installation',
+              '',
+              "1. ``Wake-on-LAN-$ver.zip`` herunterladen und in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Wake on LAN``.",
+              '2. `Wake on LAN.exe` starten und Geräte anlegen – oder über `…` › Aus alten Skripten übernehmen.',
+              '3. Das Programm an die Taskleiste anheften: Die Sprungliste (Rechtsklick) zeigt Alle wecken, Gruppen und Geräte.',
+              '',
+              'Voraussetzung: Windows 10/11 mit .NET Framework 4.5 oder neuer. Für IPMI wird `ipmitool` gebraucht. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.'
+            )
+            $lines | Set-Content -Path "notes\$ver.md" -Encoding utf8   # pwsh 7: UTF-8 ohne BOM
+            Write-Host "---- $ver"; Get-Content "notes\$ver.md"
+          }
+
+      - name: Kompilieren
+        if: steps.ver.outputs.new != ''
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.new }}'
+          @(
+            "[assembly: System.Reflection.AssemblyVersion(""$ver"")]"
+            "[assembly: System.Reflection.AssemblyFileVersion(""$ver"")]"
+            "[assembly: System.Reflection.AssemblyInformationalVersion(""$ver"")]"
+            "namespace WakeOnLan { public static partial class AppInfo { public const string Version = ""$ver""; } }"
+          ) | Set-Content -Path 'Quellcode\VersionInfo.cs' -Encoding UTF8
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
+          $wpf = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\WPF"
+          & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:Wake on LAN.exe" `
+            "/win32icon:Resources\WakeOnLan.ico" "/resource:Resources\WakeOnLan.ico,WakeOnLan.ico" `
+            "/resource:Resources\GS-Logo.png,GS-Logo.png" "/resource:Resources\Demo.xml,Demo.xml" `
+            /win32manifest:Quellcode\app.manifest `
+            /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
+            /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.Security.dll /r:Microsoft.CSharp.dll `
+            "/lib:$wpf" /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll `
+            Quellcode\*.cs
+          if ($LASTEXITCODE -ne 0) { throw "Kompilieren fehlgeschlagen" }
+
+      - name: ZIP packen
+        if: steps.ver.outputs.new != ''
+        shell: pwsh
+        run: |
+          # GitHub ersetzt Leerzeichen in Dateinamen von Release-Anhängen durch Punkte -
+          # im ZIP bleibt der Originalname "Wake on LAN.exe" erhalten
+          $ver = '${{ steps.ver.outputs.new }}'
+          New-Item -ItemType Directory -Path 'paket' | Out-Null
+          Copy-Item 'Wake on LAN.exe', 'Liesmich.txt' -Destination 'paket'
+          Compress-Archive -Path 'paket\*' -DestinationPath "Wake-on-LAN-$ver.zip"
+
+      - name: Release anlegen
+        if: steps.ver.outputs.new != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = '${{ steps.ver.outputs.new }}'
+          gh release create "v$ver" "Wake-on-LAN-$ver.zip" --repo "${{ github.repository }}" --title "Wake on LAN $ver" --notes-file "notes\$ver.md"
+
+      - name: Release-Texte auffrischen
+        if: steps.ver.outputs.refresh != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          foreach ($ver in ('${{ steps.ver.outputs.refresh }}' -split ' ' | Where-Object { $_ })) {
+            gh release edit "v$ver" --repo "${{ github.repository }}" --notes-file "notes\$ver.md"
+            if ($LASTEXITCODE -ne 0) { throw "Release-Text v$ver konnte nicht aktualisiert werden" }
+          }

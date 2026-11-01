@@ -1,0 +1,21 @@
+# Gebaute Programme und Build-Ausgaben
+*.exe
+*.neu.exe
+Erstellen.log
+Quellcode/VersionInfo.cs
+
+# Sicherungen und Entwürfe
+Backup/
+Bin/
+Design/
+
+# Laufzeitdaten (die Geräteliste liegt ohnehin unter %LOCALAPPDATA%)
+Geräte.xml
+Verlauf.log
+Fehler.log
+*.ini
+Screenshots/Fehler.txt
+
+# Windows
+Thumbs.db
+desktop.ini

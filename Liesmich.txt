@@ -1,0 +1,187 @@
+WAKE ON LAN
+===========
+
+Schaltet Geräte im Netzwerk ein. Ersetzt die bisherigen Skripte
+"Wake on LAN (<Gerät>).bat" und das Hilfsprogramm wol.exe von Gammadyne.
+
+Aktuelle Version: siehe Info-Fenster (Klick auf die Versionsnummer) bzw.
+Eigenschaften > Details der EXE.
+
+
+ARTEN ZU WECKEN
+---------------
+Je Gerät lassen sich eine oder mehrere Arten einschalten:
+
+  Weckpaket      Klassisches Wake on LAN (Magic Packet) an eine oder mehrere
+                 MAC-Adressen. Geht als Broadcast über alle aktiven
+                 Netzwerkkarten (UDP-Port 9) – die Angabe einer bestimmten
+                 Netzwerkkarte wie früher bei wol.exe ist nicht mehr nötig.
+                 Optional eine zusätzliche Zieladresse, z. B. die
+                 Broadcast-Adresse eines anderen Netzes.
+
+  Anstoßen       Verbindungsversuch auf einen Port (Standard 445) an die
+                 IP-Adresse. Weckt Netzwerkkarten mit "Wake on Pattern Match"
+                 (wie bisher Test-NetConnection in "Alle PCs").
+
+  IPMI           Server über die Fernwartung einschalten (z. B. Dell iDRAC)
+                 mit ipmitool. Erst wird der Zustand abgefragt, nur bei "aus"
+                 wird eingeschaltet. Das Kennwort wird verschlüsselt gespeichert
+                 (Windows-Datenschutz, nur für den aktuellen Benutzer lesbar)
+                 und an ipmitool über die Umgebungsvariable IPMI_PASSWORD
+                 übergeben, nicht auf der Befehlszeile.
+
+
+STATUS
+------
+Alle 15 Sekunden (nach dem Wecken alle 3 Sekunden, höchstens 3 Minuten),
+grün = Online, rot = Offline mit "zuletzt online vor …". Je Gerät einstellbar
+unter "Status prüfen über":
+  Ping                   Standard
+  TCP-Port               z. B. 3389 (Remotedesktop), 22 (SSH), 5000 (Synology);
+                         für PCs, deren Firewall Ping blockiert
+  Ping, sonst TCP-Port   beides nacheinander
+  IPMI                   Einschaltzustand des Servers
+  Aus                    kein Status
+Port 445, 139 und 137 sind für den Status gesperrt – ein Verbindungsversuch
+dort würde Geräte mit "Wake on Pattern Match" wecken.
+Antwortet ein laufender Windows-PC nicht auf Ping, die Firewall-Regel
+"Datei- und Druckerfreigabe (Echoanforderung - ICMPv4 eingehend)" einschalten.
+
+IP automatisch über die MAC: Bleibt die IP-Adresse leer und ist "Sonst IP
+automatisch über die MAC ermitteln" an, sucht das Programm die aktuelle IP in
+der ARP-Tabelle von Windows bzw. per kurzer ARP-Suche im eigenen Netz (weckt
+nichts, höchstens alle 2 Minuten). Die gefundene IP wird gemerkt. Funktioniert
+nur im eigenen Netz, nicht über Router oder VPN. Dauerhaft am saubersten:
+feste Zuweisung (DHCP-Reservierung) im Router.
+
+
+BEDIENUNG
+---------
+  Gerät hinzufügen           Knopf oben rechts (Strg+N)
+  Bearbeiten                 Doppelklick auf das Gerät
+  Weitere Funktionen         Rechtsklick oder "…" am Gerät: Wecken, Bearbeiten,
+                             Duplizieren, Nach oben/unten, Verknüpfung auf dem
+                             Desktop, Löschen
+  Alle wecken                alle Geräte, deren Schalter "Alle wecken" in der
+                             Zeile eingeschaltet ist (Anzahl steht auf dem Knopf)
+  Gruppen                    "…" oben > Neue Gruppe, Gruppe beim Bearbeiten
+                             eintragen, per Rechtsklick > In Gruppe oder Gerät
+                             per Maus auf die Gruppen-Überschrift ziehen. Je Gruppe eine Überschrift mit "Gruppe
+                             wecken"; Klick auf die Überschrift klappt sie zu/auf,
+                             Rechtsklick: Nach oben/unten, Geräte sortieren
+                             (Name, IP-Adresse), Umbenennen,
+                             Verknüpfung, Auflösen
+  Ziehen mit der Maus        Gerät auf ein anderes Gerät: davor/dahinter
+                             einsortieren (auch in andere Gruppe); Gruppen-
+                             Überschrift auf eine andere: Reihenfolge der Gruppen
+  Status prüfen              sofort prüfen (F5)
+  Suchen                     Feld über der Liste (Strg+F, Esc leert): Name, IP,
+                             MAC oder Gruppe
+  Herunterfahren             Rechtsklick > Herunterfahren / Neu starten (Windows)
+                             bzw. Über IPMI herunterfahren (sanft, ACPI);
+                             Gruppenmenü > Gruppe herunterfahren. Für Windows
+                             unter "Gerät bearbeiten" Benutzer (z. B.
+                             Büro-PC\Admin) und Kennwort hinterlegen; das
+                             Kennwort wird verschlüsselt gespeichert. Der Benutzer
+                             braucht Administratorrechte auf dem Ziel. Auf dem
+                             Ziel-PC: Firewall-Regeln "Remote-Herunterfahren"
+                             bzw. RPC zulassen; bei lokalen Konten einmal
+                             reg add HKLM\SOFTWARE\Microsoft\Windows\
+                             CurrentVersion\Policies\System /v
+                             LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
+  Sprungliste                Rechtsklick auf das angeheftete Programm in der
+                             Taskleiste: Alle wecken, Gruppen und Geräte direkt
+  Benachrichtigungen         Windows-Meldung, wenn das geweckte Gerät online ist
+                             (bzw. nach 3 Minuten nicht) – im Fenster nur, wenn
+                             es nicht im Vordergrund ist; abschaltbar unter "…"
+  Zeitpläne                  "…" > Zeitpläne: z. B. Gruppe Server Mo–Fr 07:00
+                             wecken; liegt als "Wake on LAN - …" in der Windows-
+                             Aufgabenplanung und läuft, solange du angemeldet bist
+  Verlauf                    "…" > Verlauf: wann was geweckt, online, nicht
+                             erreicht oder heruntergefahren wurde
+  Export/Import              "…" > Geräteliste exportieren/importieren (XML,
+                             ohne IPMI-Kennwörter – die sind nur unter deinem
+                             Windows-Benutzer lesbar und müssen neu rein)
+  "…" oben rechts            Aus alten Skripten übernehmen, Sortieren (Name,
+                             IP-Adresse, "Alle wecken" zuerst), Verknüpfung
+                             "Alle wecken", Ordner der Geräteliste öffnen
+
+Aus alten Skripten übernehmen: Ordner mit den Dateien
+"Wake on LAN (<Gerät>).bat" auswählen. Übernommen werden die MAC-Adressen,
+die IPMI-Angaben samt Kennwortdatei und aus "Wake on LAN (Alle PCs).bat"
+die Zugehörigkeit zu "Alle wecken" und die Geräte zum Anstoßen.
+Vorhandene Geräte mit gleichem Namen bleiben unverändert.
+
+
+KOMMANDOZEILE
+-------------
+  "Wake on LAN.exe"                     Fenster öffnen
+  "Wake on LAN.exe" Büro-PC             Gerät wecken (Name wie in der Liste)
+  "Wake on LAN.exe" Büro-PC Spiele-PC   mehrere Geräte
+  "Wake on LAN.exe" /alle               alle Geräte von "Alle wecken"
+  "Wake on LAN.exe" "/gruppe:Server"    alle Geräte einer Gruppe
+  "Wake on LAN.exe" /?                  Hilfe
+
+Ohne Fenster. Eine Windows-Benachrichtigung zeigt "Wecke …" und später
+"… ist online (nach 42 s)"; das Symbol im Infobereich verschwindet danach von selbst.
+Exit-Code 0 = in Ordnung, 1 = Fehler. Passende Verknüpfungen legt das
+Programm selbst auf dem Desktop an (Rechtsklick > Verknüpfung auf dem Desktop).
+
+
+DATEIEN
+-------
+  Geräteliste    %LOCALAPPDATA%\Wake on LAN\Geräte.xml
+                 (wird erst beim ersten Speichern angelegt)
+  Verlauf        %LOCALAPPDATA%\Wake on LAN\Verlauf.log
+  Programm       Wake on LAN.exe, benötigt .NET Framework 4.5 oder neuer
+                 (in Windows 10 und 11 enthalten)
+
+
+VERSIONEN
+---------
+  1.12.2026.1101 Dunkle Titelleiste bleibt auch erhalten, wenn Windows das
+                 Fenster neu aufbaut; Auswahlfelder ("Status prüfen über",
+                 Zeitplan-Ziel) mit Text links und Pfeil rechts; Beschriftung
+                 "TCP-Port für den Status" nicht mehr abgeschnitten
+  1.11.2026.1101 Screenshots: Fehler in den Beispieldaten behoben (Demo.xml)
+  1.10.2026.1101 Vorbereitung für GitHub (README.md, .gitignore, Beispiele in
+                 Texten mit neutralen Gerätenamen)
+  1.9.2026.1101  Herunterfahren mit hinterlegtem Benutzer und Kennwort je Gerät
+                 (verschlüsselt gespeichert, Anmeldung über IPC$ und Windows-
+                 Funktion statt shutdown.exe, verständlichere Fehlermeldungen)
+  1.8.2026.1101  Status je Gerät wählbar (Ping, TCP-Port, beides, IPMI, aus);
+                 IP automatisch über die MAC (ARP); Sprungliste in der
+                 Taskleiste; Windows-Benachrichtigungen (auch beim Wecken über
+                 Kommandozeile, Sprungliste und Zeitplan); Herunterfahren und
+                 Neustart (Windows bzw. IPMI, auch ganze Gruppe); Suchfeld;
+                 "zuletzt online" und Verlauf; Geräteliste exportieren und
+                 importieren; Zeitpläne über die Windows-Aufgabenplanung;
+                 Fenster "Gerät bearbeiten" dreispaltig
+  1.7.2026.1101  Gruppenmenü > Geräte sortieren: Geräte einer Gruppe nach Name
+                 oder IP-Adresse ordnen; Schalter "Alle wecken" direkt in jeder
+                 Gerätezeile (statt gelbem Schild), Knopf zeigt die Anzahl
+                 ("Alle wecken (4)"); Fenster startet größer (1040 × 820)
+  1.6.2026.1101  Geräte per Drag & Drop in Gruppen schieben und umsortieren,
+                 Gruppen per Drag & Drop oder Menü sortieren, "Neue Gruppe"
+                 im Menü oben (leere Gruppen möglich), Sortieren > Gruppen
+                 nach Name
+  1.5.2026.1101  Gruppen: Geräte gruppieren, ganze Gruppe wecken (auch per
+                 Verknüpfung bzw. /gruppe:<Name>), Gruppen zuklappen,
+                 umbenennen und auflösen; Nach oben/unten innerhalb der Gruppe
+  1.4.2026.1101  Gerätezeilen einzeilig: Name, Schild und Details nebeneinander
+                 (deutlich weniger Scrollen); Status als Symbol: grün mit Haken =
+                 online, rot mit Kreuz = offline bzw. ausgeschaltet; Liste
+                 sortieren (Name, IP-Adresse, "Alle wecken" zuerst)
+  1.3.2026.1101  Screenshots für GitHub ("Wake on LAN.exe" --screenshots, Beispiel-
+                 daten, hell und dunkel; Erstellen.bat fragt nach); "Nicht bei
+                 Alle wecken" als gelbes Schild neben dem Namen; Status rechts
+                 wurde abgeschnitten ("O…" statt "Online"); Geräte-
+                 zeilen kompakter (weniger Scrollen)
+  1.2.2026.1101  Absturz beim Hinzufügen von Geräten bzw. beim Übernehmen der
+                 alten Skripte behoben; unerwartete Fehler landen in
+                 %LOCALAPPDATA%\Wake on LAN\Fehler.log
+  1.1.2026.1101  Warnungen beim Kompilieren behoben
+  1.0.2026.1101  Erste Version: Geräteliste mit Status, Weckpaket, Anstoßen
+                 und IPMI, Alle wecken, Kommandozeile, Desktop-Verknüpfungen,
+                 Übernahme der alten Skripte; Windows-11-Design mit
+                 Akzentfarbe, hell/dunkel, Footer und Info-Fenster

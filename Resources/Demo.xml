@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Erfundene Beispielgeräte für die Screenshots (Aufruf "Wake on LAN.exe" mit dem Parameter screenshots).
+     MAC-Adressen aus dem Dokumentationsbereich 00:00:5E:00:53:xx (RFC 7042). -->
+<WakeOnLan Version="1">
+  <Geraet Name="Spiele-PC" Alle="true" Adresse="192.168.1.20">
+    <Weckpaket Aktiv="true">
+      <Mac>00:00:5E:00:53:10</Mac>
+    </Weckpaket>
+  </Geraet>
+  <Geraet Name="Büro-Laptop" Alle="true" Adresse="192.168.1.31" Gruppe="Büro">
+    <Weckpaket Aktiv="true">
+      <Mac>00:00:5E:00:53:21</Mac>
+      <Mac>00:00:5E:00:53:22</Mac>
+    </Weckpaket>
+    <Anstossen Aktiv="true" Port="445" />
+  </Geraet>
+  <Geraet Name="Medienserver" Alle="true" Adresse="192.168.1.40" Gruppe="Server">
+    <Weckpaket Aktiv="true">
+      <Mac>00:00:5E:00:53:40</Mac>
+    </Weckpaket>
+  </Geraet>
+  <Geraet Name="Hyper-V-Host" Alle="false" Gruppe="Server">
+    <Ipmi Aktiv="true" Adresse="192.168.1.5" Benutzer="admin" Kennwort="" Programm="C:\Program Files (x86)\Dell\SysMgt\bmc\ipmitool.exe" />
+  </Geraet>
+  <Geraet Name="NAS" Alle="false" Adresse="192.168.1.50" Gruppe="Server">
+    <Weckpaket Aktiv="true">
+      <Mac>00:00:5E:00:53:50</Mac>
+    </Weckpaket>
+  </Geraet>
+  <Geraet Name="Werkstatt-PC" Alle="true" Gruppe="Büro">
+    <Weckpaket Aktiv="true">
+      <Mac>00:00:5E:00:53:60</Mac>
+    </Weckpaket>
+  </Geraet>
+</WakeOnLan>
