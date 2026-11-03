@@ -24,6 +24,10 @@ namespace WakeOnLan
 {
     internal static class Program
     {
+        /// <summary>Signal "Fenster zeigen" an das laufende Programm (zweiter Start, z. B. aus dem Startmenü).</summary>
+        public static EventWaitHandle ShowSignal;
+        private static Mutex _instance;
+
         [STAThread]
         private static int Main(string[] args)
         {
@@ -39,10 +43,26 @@ namespace WakeOnLan
 
             var store = new DeviceStore();
 
-            // Kommandozeile: "Wake on LAN.exe" <Gerät> [<Gerät> ...] bzw. /alle – ohne Fenster
-            if (args.Length > 0) return CommandLine.Run(store, args);
+            // Autostart: nur im Infobereich starten (Steuerung per Handy)
+            bool background = args.Length == 1 && (args[0].Equals("/hintergrund", StringComparison.OrdinalIgnoreCase) || args[0].Equals("--hintergrund", StringComparison.OrdinalIgnoreCase));
 
-            if (ActivateRunning()) return 0;
+            // Kommandozeile: "Wake on LAN.exe" <Gerät> [<Gerät> ...] bzw. /alle – ohne Fenster
+            if (args.Length > 0 && !background) return CommandLine.Run(store, args);
+
+            // Nur ein Fenster: läuft das Programm schon (auch versteckt im Infobereich), wird es nach vorne geholt
+            bool first;
+            _instance = new Mutex(true, "Local\\WakeOnLan.Fenster", out first);
+            try { ShowSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\WakeOnLan.Zeigen"); } catch { }
+            if (!first)
+            {
+                if (!background && ShowSignal != null)
+                {
+                    AllowSetForegroundWindow(-1); // das laufende Programm darf sein Fenster nach vorne holen
+                    ShowSignal.Set();
+                }
+                return 0;
+            }
+            if (!background && ActivateRunning()) return 0; // ältere Version ohne Signal
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += (s, e) => ShowCrash(e.Exception, store);
             AppDomain.CurrentDomain.UnhandledException += (s, e) => ShowCrash(e.ExceptionObject as Exception, store);
@@ -56,7 +76,8 @@ namespace WakeOnLan
                     "\r\n\r\nDas Programm startet mit einer leeren Liste. Die Datei wird erst beim nächsten Speichern überschrieben.",
                     Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
-            Application.Run(new MainForm(store));
+            Application.Run(new MainForm(store, false, background));
+            GC.KeepAlive(_instance);
             return 0;
         }
 
@@ -88,6 +109,9 @@ namespace WakeOnLan
         [DllImport("user32.dll")]
         private static extern bool IsIconic(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        private static extern bool AllowSetForegroundWindow(int processId);
+
         /// <summary>Läuft das Fenster schon, wird es nach vorne geholt statt ein zweites zu öffnen.</summary>
         private static bool ActivateRunning()
         {
@@ -115,7 +139,8 @@ namespace WakeOnLan
             "  \"Wake on LAN.exe\"                  Fenster öffnen\r\n" +
             "  \"Wake on LAN.exe\" <Gerät> [...]    Geräte wecken (Name wie in der Liste)\r\n" +
             "  \"Wake on LAN.exe\" /alle            alle Geräte von „Alle wecken“\r\n" +
-            "  \"Wake on LAN.exe\" \"/gruppe:<Name>\"  alle Geräte einer Gruppe\r\n\r\n" +
+            "  \"Wake on LAN.exe\" \"/gruppe:<Name>\"  alle Geräte einer Gruppe\r\n" +
+            "  \"Wake on LAN.exe\" /hintergrund     nur im Infobereich starten (Steuerung per Handy)\r\n\r\n" +
             "Beim Wecken über die Kommandozeile öffnet sich kein Fenster. Eine Windows-\r\n" +
             "Benachrichtigung meldet, wenn die Geräte online sind (abschaltbar im Fenster\r\n" +
             "unter „…“). Exit-Code: 0 = in Ordnung, 1 = Fehler.";

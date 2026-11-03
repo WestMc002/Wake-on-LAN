@@ -126,14 +126,14 @@ namespace WakeOnLan
             return Unprotect(ShutdownPasswordProtected);
         }
 
-        private static string Protect(string plain)
+        internal static string Protect(string plain)
         {
             if (string.IsNullOrEmpty(plain)) return "";
             byte[] data = ProtectedData.Protect(Encoding.UTF8.GetBytes(plain), Entropy, DataProtectionScope.CurrentUser);
             return Convert.ToBase64String(data);
         }
 
-        private static string Unprotect(string stored)
+        internal static string Unprotect(string stored)
         {
             if (string.IsNullOrEmpty(stored)) return null;
             try
@@ -214,6 +214,8 @@ namespace WakeOnLan
         public readonly string FilePath;
         /// <summary>Nur lesen (Beispieldaten, Import): Save() schreibt nichts.</summary>
         public bool ReadOnly;
+        /// <summary>Steuerung per Handy (wird nicht exportiert).</summary>
+        public RemoteSettings Remote = new RemoteSettings();
 
         public DeviceStore()
         {
@@ -242,6 +244,7 @@ namespace WakeOnLan
             Devices.Clear();
             Collapsed.Clear();
             GroupOrder.Clear();
+            Remote = new RemoteSettings();
             if (!File.Exists(FilePath)) return;
             var doc = XDocument.Load(FilePath);
             var root = doc.Root;
@@ -253,6 +256,23 @@ namespace WakeOnLan
                 WindowWidth = Int(win, "Breite", 0);
                 WindowHeight = Int(win, "Hoehe", 0);
                 LayoutVersion = Int(win, "Layout", 1);
+            }
+            var remote = root.Element("Fernsteuerung");
+            if (remote != null)
+            {
+                Remote.Enabled = Bool(remote, "Aktiv", false);
+                Remote.Port = Int(remote, "Port", RemoteSettings.DefaultPort);
+                Remote.Address = Str(remote, "Adresse");
+                Remote.Background = Bool(remote, "Hintergrund", true);
+                Remote.PinHash = Str(remote, "Passwort"); // frühere PIN ("Pin") wird bewusst nicht übernommen
+                Remote.SecretProtected = Str(remote, "Schluessel");
+                Remote.Https = Bool(remote, "Https", false);
+                Remote.Internet = Bool(remote, "Internet", false);
+                Remote.CertFile = Str(remote, "Zertifikat");
+                Remote.KeyFile = Str(remote, "PrivaterSchluessel");
+                Remote.CertPasswordProtected = Str(remote, "ZertifikatKennwort");
+                Remote.CertMode = Str(remote, "ZertifikatQuelle") == "Speicher" ? "Speicher" : "Datei";
+                Remote.CertName = Str(remote, "ZertifikatDomain");
             }
             foreach (var z in root.Elements("Zugeklappt")) Collapsed.Add(Str(z, "Gruppe"));
             foreach (var o in root.Elements("Gruppe")) if (Str(o, "Name").Length > 0) GroupOrder.Add(Str(o, "Name"));
@@ -336,6 +356,21 @@ namespace WakeOnLan
                 if (WindowWidth > 0 && WindowHeight > 0)
                     root.Add(new XElement("Fenster", new XAttribute("Breite", WindowWidth), new XAttribute("Hoehe", WindowHeight), new XAttribute("Layout", LayoutVersion)));
                 foreach (var g in Collapsed) root.Add(new XElement("Zugeklappt", new XAttribute("Gruppe", g)));
+                if (Remote.Enabled || Remote.PinHash.Length > 0 || Remote.CertFile.Length > 0 || Remote.CertName.Length > 0)
+                    root.Add(new XElement("Fernsteuerung",
+                        new XAttribute("Aktiv", Remote.Enabled),
+                        new XAttribute("Port", Remote.Port),
+                        new XAttribute("Adresse", Remote.Address),
+                        new XAttribute("Hintergrund", Remote.Background),
+                        new XAttribute("Passwort", Remote.PinHash),
+                        new XAttribute("Schluessel", Remote.SecretProtected),
+                        new XAttribute("Https", Remote.Https),
+                        new XAttribute("Internet", Remote.Internet),
+                        new XAttribute("Zertifikat", Remote.CertFile),
+                        new XAttribute("PrivaterSchluessel", Remote.KeyFile),
+                        new XAttribute("ZertifikatKennwort", Remote.CertPasswordProtected),
+                        new XAttribute("ZertifikatQuelle", Remote.CertMode),
+                        new XAttribute("ZertifikatDomain", Remote.CertName)));
             }
             foreach (var g in Groups()) root.Add(new XElement("Gruppe", new XAttribute("Name", g))); // Reihenfolge
             foreach (var d in Devices)

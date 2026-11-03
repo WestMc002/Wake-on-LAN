@@ -55,23 +55,37 @@ namespace WakeOnLan
         }
     }
 
-    /// <summary>Windows-Benachrichtigung über ein Symbol im Infobereich (nur solange eine Meldung angezeigt wird).</summary>
+    /// <summary>
+    /// Symbol im Infobereich: Windows-Benachrichtigungen (Symbol nur, solange eine Meldung angezeigt wird)
+    /// oder dauerhaft mit Menü, wenn das Programm im Hintergrund weiterläuft.
+    /// </summary>
     internal sealed class Notifier : IDisposable
     {
         private readonly NotifyIcon _icon;
         private readonly Timer _hide = new Timer { Interval = 12000 };
+        private bool _persistent;
 
         public Notifier()
         {
             _icon = new NotifyIcon { Text = Ui.AppName, Visible = false };
             try { _icon.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
-            _hide.Tick += (s, e) => { _hide.Stop(); _icon.Visible = false; };
+            _hide.Tick += (s, e) => { _hide.Stop(); if (!_persistent) _icon.Visible = false; };
             _icon.BalloonTipClicked += (s, e) => { if (Clicked != null) Clicked(this, EventArgs.Empty); };
-            _icon.MouseClick += (s, e) => { if (Clicked != null) Clicked(this, EventArgs.Empty); };
+            _icon.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left && Clicked != null) Clicked(this, EventArgs.Empty); };
         }
 
-        /// <summary>Klick auf die Meldung oder das Symbol.</summary>
+        /// <summary>Klick auf die Meldung oder (mit der linken Maustaste) auf das Symbol.</summary>
         public event EventHandler Clicked;
+
+        /// <summary>Symbol dauerhaft anzeigen (mit Menü und Hinweistext) oder nur für Meldungen.</summary>
+        public void SetPersistent(bool on, ContextMenuStrip menu, string tooltip)
+        {
+            _persistent = on;
+            _icon.ContextMenuStrip = on ? menu : null;
+            string t = string.IsNullOrEmpty(tooltip) ? Ui.AppName : tooltip;
+            _icon.Text = t.Length > 63 ? t.Substring(0, 63) : t; // Windows erlaubt höchstens 63 Zeichen
+            _icon.Visible = on || _hide.Enabled; // gerade angezeigte Meldung nicht wegnehmen
+        }
 
         public void Show(string title, string text, ToolTipIcon icon)
         {

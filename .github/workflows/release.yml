@@ -95,6 +95,7 @@ jobs:
           & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:Wake on LAN.exe" `
             "/win32icon:Resources\WakeOnLan.ico" "/resource:Resources\WakeOnLan.ico,WakeOnLan.ico" `
             "/resource:Resources\GS-Logo.png,GS-Logo.png" "/resource:Resources\Demo.xml,Demo.xml" `
+            "/resource:Resources\Web\index.html,Web.index.html" "/resource:Resources\Web\app.css,Web.app.css" "/resource:Resources\Web\app.js,Web.app.js" `
             /win32manifest:Quellcode\app.manifest `
             /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
             /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.Security.dll /r:Microsoft.CSharp.dll `

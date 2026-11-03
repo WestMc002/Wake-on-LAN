@@ -109,6 +109,40 @@ namespace WakeOnLan
             folder.RegisterTask(Prefix + CleanName(name), task.ToString(), 6, null, null, 3, null);
         }
 
+        /// <summary>
+        /// Programm verschoben: Zeitpläne, deren Programmpfad nicht mehr existiert, auf den aktuellen Pfad umstellen.
+        /// Rückgabe: Anzahl der angepassten Zeitpläne.
+        /// </summary>
+        public static int RepairPaths()
+        {
+            string exe = Application.ExecutablePath;
+            string dir = Path.GetDirectoryName(exe);
+            int count = 0;
+            dynamic folder = Root();
+            dynamic tasks = folder.GetTasks(1);
+            foreach (dynamic task in tasks)
+            {
+                string name = task.Name;
+                if (!name.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                dynamic def = task.Definition;
+                bool changed = false;
+                foreach (dynamic action in def.Actions)
+                {
+                    int type = action.Type;
+                    if (type != 0) continue; // nur "Programm starten"
+                    string path = action.Path;
+                    if (string.Equals(path, exe, StringComparison.OrdinalIgnoreCase) || File.Exists(path)) continue;
+                    action.Path = exe;
+                    action.WorkingDirectory = dir;
+                    changed = true;
+                }
+                if (!changed) continue;
+                folder.RegisterTaskDefinition(name, def, 6, null, null, 3, null);
+                count++;
+            }
+            return count;
+        }
+
         public static void Delete(string name)
         {
             dynamic folder = Root();
@@ -279,7 +313,7 @@ namespace WakeOnLan
         private readonly float k;
         private readonly ModernButton _target;
         private readonly ModernTextBox _time;
-        private readonly ModernCheck[] _days = new ModernCheck[7];
+        private readonly ModernPill[] _days = new ModernPill[7];
         private readonly Label _error;
         private readonly DeviceStore _store;
         private string _args = "/alle", _targetText = "Alle wecken";
@@ -314,11 +348,14 @@ namespace WakeOnLan
             int x = m;
             for (int i = 0; i < 7; i++)
             {
-                _days[i] = new ModernCheck(Schedules.DayNames[i], k) { Location = new Point(x, y), Checked = i < 5 };
-                Controls.Add(_days[i]);
-                x += _days[i].Width + S(8);
+                // Wochentage als Auswahlknöpfe nebeneinander (Klick schaltet ein/aus)
+                var day = new ModernPill(Schedules.DayNames[i], k) { Location = new Point(x, y), Checked = i < 5 };
+                day.Click += (s, e) => day.Checked = !day.Checked;
+                _days[i] = day;
+                Controls.Add(day);
+                x += day.Width + S(6);
             }
-            y += S(28) + S(24);
+            y += _days[0].Height + S(24);
 
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
             var save = new ModernButton("Speichern", '\0', true, k);

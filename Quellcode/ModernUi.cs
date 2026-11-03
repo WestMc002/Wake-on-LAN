@@ -487,7 +487,7 @@ namespace WakeOnLan
         }
     }
 
-    /// <summary>Kontrollkästchen im Windows-11-Stil (abgerundet, Akzentfarbe, Haken).</summary>
+    /// <summary>Schalter im Windows-11-Stil (Text links, Schalter rechts, Akzentfarbe) – gleich wie in Sync Pilot.</summary>
     internal sealed class ModernCheck : Control
     {
         private readonly float k;
@@ -521,7 +521,7 @@ namespace WakeOnLan
         private void UpdateSize()
         {
             int tw = TextRenderer.MeasureText(Text, Font).Width;
-            Size = new Size((int)(30 * k) + tw, (int)(28 * k));
+            Size = new Size(tw + (int)(60 * k), (int)(32 * k));
         }
 
         protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); if (k > 0) UpdateSize(); }
@@ -542,42 +542,100 @@ namespace WakeOnLan
             base.OnKeyDown(e);
         }
 
+        /// <summary>Schalter wie in den Windows-11-Einstellungen (und in Sync Pilot): Text links, Schalter rechts.</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
             g.Clear(Parent != null ? Parent.BackColor : Ui.Card);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            float s = 20 * k;
-            var box = new RectangleF(1 * k, (Height - s) / 2f, s, s);
-            using (var p = Ui.Rounded(box, 4 * k))
+            float tw = 40 * k, th = 20 * k;
+            var track = new RectangleF(Width - tw - 2 * k, (Height - th) / 2f, tw, th);
+            using (var p = Ui.Rounded(track, th / 2f))
             {
-                if (_checked && Enabled)
+                if (_checked)
                 {
-                    using (var b = new SolidBrush(_hover ? Ui.PrimaryHover : Ui.Primary)) g.FillPath(b, p);
+                    using (var b = new SolidBrush(!Enabled ? Ui.Disabled : _hover ? Ui.PrimaryHover : Ui.Primary)) g.FillPath(b, p);
                 }
                 else
                 {
                     using (var b = new SolidBrush(_hover && Enabled ? Ui.Hover : Ui.Card)) g.FillPath(b, p);
                     using (var pen = new Pen(Enabled ? Ui.Muted : Ui.Disabled, 1f * k)) g.DrawPath(pen, p);
                 }
-                if (_checked && !Enabled)
-                    using (var b = new SolidBrush(Ui.Disabled)) g.FillPath(b, p);
             }
-            if (_checked)
+            float d = (_hover && Enabled ? 14 : 12) * k;
+            float kx = _checked ? track.Right - 4 * k - d : track.X + 4 * k, ky = track.Y + (th - d) / 2f;
+            using (var b = new SolidBrush(_checked ? (Enabled ? Ui.PrimaryText : Ui.Card) : (Enabled ? Ui.Muted : Ui.Disabled)))
+                g.FillEllipse(b, kx, ky, d, d);
+            if (Focused && ShowKeyboardCues)
+                using (var pen = new Pen(Ui.Text, 1f) { DashStyle = DashStyle.Dot })
+                    g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            TextRenderer.DrawText(g, Text, Font, new Rectangle((int)(2 * k), 0, (int)(track.X - 12 * k), Height), Enabled ? Ui.Text : Ui.Disabled,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+        }
+    }
+
+    /// <summary>Auswahlknopf in Pillenform (wie in Sync Pilot), z. B. für die Herkunft des Zertifikats.</summary>
+    internal sealed class ModernPill : Control
+    {
+        private readonly float k;
+        private bool _checked, _hover;
+
+        public ModernPill(string text, float scale)
+        {
+            k = scale;
+            Text = text;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            Font = new Font("Segoe UI", 9.5f);
+            Cursor = Cursors.Hand;
+            TabStop = true;
+            Size = new Size(TextRenderer.MeasureText(text, Font).Width + (int)(28 * k), (int)(32 * k));
+        }
+
+        public bool Checked
+        {
+            get { return _checked; }
+            set { if (_checked == value) return; _checked = value; Invalidate(); }
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter) { OnClick(EventArgs.Empty); e.Handled = true; }
+            base.OnKeyDown(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Parent != null ? Parent.BackColor : Ui.Card);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Color fg;
+            using (var p = Ui.Rounded(r, r.Height / 2f))
             {
-                float cx = box.X + s / 2, cy = box.Y + s / 2, m = 4.5f * k;
-                using (var pen = new Pen(Enabled ? Ui.PrimaryText : Ui.Card, 1.6f * k))
+                if (_checked)
                 {
-                    pen.StartCap = pen.EndCap = LineCap.Round;
-                    pen.LineJoin = LineJoin.Round;
-                    g.DrawLines(pen, new[] { new PointF(cx - m, cy + 0.2f * k), new PointF(cx - m / 3, cy + m * 0.7f), new PointF(cx + m, cy - m * 0.7f) });
+                    using (var b = new SolidBrush(!Enabled ? Ui.Disabled : _hover ? Ui.PrimaryHover : Ui.Primary)) g.FillPath(b, p);
+                    fg = Enabled ? Ui.PrimaryText : Ui.Card;
+                }
+                else
+                {
+                    using (var b = new SolidBrush(_hover && Enabled ? Ui.Hover : Ui.Card)) g.FillPath(b, p);
+                    using (var pen = new Pen(Ui.Border, 1f * k)) g.DrawPath(pen, p);
+                    fg = Enabled ? Ui.Text : Ui.Disabled;
                 }
             }
             if (Focused && ShowKeyboardCues)
                 using (var pen = new Pen(Ui.Text, 1f) { DashStyle = DashStyle.Dot })
-                    g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
-            TextRenderer.DrawText(g, Text, Font, new Rectangle((int)(30 * k), 0, Width - (int)(30 * k), Height), Enabled ? Ui.Text : Ui.Disabled,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+                    g.DrawRectangle(pen, (int)(3 * k), (int)(3 * k), Width - (int)(7 * k), Height - (int)(7 * k));
+            TextRenderer.DrawText(g, Text, Font, ClientRectangle, fg,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
         }
     }
 

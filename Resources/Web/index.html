@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F3F3F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#202020" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Wake on LAN">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Wake on LAN</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<header class="kopf">
+  <img class="kopf-icon" src="/icon-192.png" alt="">
+  <div class="kopf-text">
+    <h1>Wake on LAN</h1>
+    <p id="unterzeile">Geräte im Netzwerk einschalten</p>
+  </div>
+  <button id="abmelden" class="symbol" type="button" title="Abmelden" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>
+  </button>
+</header>
+
+<main>
+  <!-- Anmeldung -->
+  <section id="anmeldung" class="karte anmeldung" hidden>
+    <h2>Anmelden</h2>
+    <p class="leise">Bitte das Passwort eingeben, das in Wake on LAN unter „Steuerung per Handy“ festgelegt ist. Das Handy bleibt danach angemeldet.</p>
+    <form id="anmeldeformular" autocomplete="on">
+      <input id="pin" name="passwort" type="password" autocomplete="current-password" placeholder="Passwort" required>
+      <button class="primaer gross" type="submit">Anmelden</button>
+    </form>
+    <p id="anmeldefehler" class="fehler" role="alert"></p>
+  </section>
+
+  <!-- Geräteliste -->
+  <section id="liste" hidden>
+    <div id="verbindung" class="hinweis" hidden>Keine Verbindung zum PC – es wird weiter versucht …</div>
+    <button id="alle" class="primaer gross" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9M6.3 6.6a8 8 0 1 0 11.4 0"/></svg>
+      <span>Alle wecken</span>
+    </button>
+    <div id="gruppen"></div>
+    <p id="leer" class="leise mitte" hidden>Noch keine Geräte – bitte am PC in Wake on LAN anlegen.</p>
+  </section>
+</main>
+
+<div id="meldung" class="meldung" role="status" hidden></div>
+
+<!-- Auswahl für Herunterfahren -->
+<div id="blatt-hintergrund" class="blatt-hintergrund" hidden></div>
+<div id="blatt" class="blatt" role="dialog" aria-modal="true" hidden>
+  <h3 id="blatt-titel"></h3>
+  <div id="blatt-knoepfe"></div>
+  <button id="blatt-abbrechen" class="sekundaer gross" type="button">Abbrechen</button>
+</div>
+
+<footer class="fuss">
+  <span id="copyright" class="leise">© Wake on LAN</span>
+  <a class="signatur" href="https://www.westmc002.de" target="_blank" rel="noopener">
+    <img src="/logo.png" alt="">
+    <span><b>Günther Schoder</b><br><span class="leise">www.westmc002.de</span></span>
+  </a>
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>

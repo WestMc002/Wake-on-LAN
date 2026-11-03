@@ -1,7 +1,7 @@
 # Wake on LAN
 
 Schaltet Geräte im Netzwerk ein – per Weckpaket (Magic Packet), per Anstoß über einen Port oder bei Servern über IPMI (z. B. Dell iDRAC).
-Im Design von Windows 11 (hell und dunkel, mit der Windows-Akzentfarbe), mit Gruppen, Statusanzeige, Zeitplänen und Sprungliste in der Taskleiste.
+Im Design von Windows 11 (hell und dunkel, mit der Windows-Akzentfarbe), mit Gruppen, Statusanzeige, Zeitplänen, Sprungliste in der Taskleiste und Steuerung per Handy.
 
 | Hell | Dunkel |
 |---|---|
@@ -14,6 +14,7 @@ Im Design von Windows 11 (hell und dunkel, mit der Windows-Akzentfarbe), mit Gru
 |---|---|
 | ![Menü eines Geräts hell](Screenshots/menue-hell.png) | ![Menü eines Geräts dunkel](Screenshots/menue-dunkel.png) |
 | ![Gerät bearbeiten hell](Screenshots/geraet-hell.png) | ![Gerät bearbeiten dunkel](Screenshots/geraet-dunkel.png) |
+| ![Steuerung per Handy hell](Screenshots/handy-hell.png) | ![Steuerung per Handy dunkel](Screenshots/handy-dunkel.png) |
 | ![Info hell](Screenshots/info-hell.png) | ![Info dunkel](Screenshots/info-dunkel.png) |
 
 Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim Erstellen (`"Wake on LAN.exe" --screenshots`).
@@ -30,6 +31,7 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 - **Gruppen** – ganze Gruppe wecken oder herunterfahren, zuklappen, umbenennen, sortieren; Geräte und Gruppen per Drag & Drop anordnen
 - **„Alle wecken“** – Schalter direkt in jeder Gerätezeile, der Knopf zeigt die Anzahl
 - **Herunterfahren und Neustart** – Windows-PCs (optional mit hinterlegtem Benutzer und Kennwort) bzw. Server sanft über IPMI
+- **Steuerung per Handy** – die Geräteliste als Webseite für Handy und Tablet (keine App nötig): Anmeldung per QR-Code ohne Passwort (Einmal-Code) oder mit Passwort, als App auf dem Startbildschirm; optional verschlüsselt mit eigenem Zertifikat (Datei oder Windows-Zertifikatspeicher, z. B. Let's Encrypt, Erneuerung wird automatisch übernommen) und optional per Portfreigabe aus dem Internet erreichbar (mit Sperre nach falschen Passwörtern). Läuft dazu im Infobereich weiter und startet auf Wunsch mit Windows
 - **Zeitpläne** – z. B. „Server Mo–Fr um 07:00 wecken“, über die Windows-Aufgabenplanung
 - **Sprungliste und Kommandozeile** – Alle wecken, Gruppen und Geräte direkt aus der Taskleiste; `"Wake on LAN.exe" Büro-PC`, `/alle`, `"/gruppe:Server"`; Desktop-Verknüpfungen auf Knopfdruck
 - **Benachrichtigungen** – Windows-Meldung, sobald das geweckte Gerät online ist
@@ -56,7 +58,7 @@ Die Version (Haupt.Neben.Jahr.MonatTag) wird dabei automatisch hochgezählt, die
 | Pfad | Inhalt |
 |---|---|
 | `Quellcode\` | C#-Quelldateien (WinForms, .NET Framework 4) und `app.manifest` |
-| `Resources\` | Icon, GS-Logo und Beispieldaten `Demo.xml` für die Screenshots (werden in die EXE eingebettet) |
+| `Resources\` | Icon, GS-Logo, Beispieldaten `Demo.xml` für die Screenshots und die Handy-Webseite `Web\` (werden in die EXE eingebettet) |
 | `Screenshots\` | Bilder für diese Seite, hell und dunkel (erzeugt die `Erstellen.bat`) |
 | `Erstellen.bat` | Build-Skript |
 | `Liesmich.txt` | Ausführliche Beschreibung und Versionsgeschichte |

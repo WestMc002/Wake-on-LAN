@@ -326,6 +326,10 @@ namespace WakeOnLan
         public const char Bell = '\uEA8F';
         public const char Save = '\uE74E';
         public const char Open = '\uE8E5';
+        public const char Phone = '\uE8EA';
+        public const char Close = '\uE8BB';
+        public const char Lock = '\uE72E';
+        public const char Shield = '\uEA18';
 
         internal static string IconFont()
         {

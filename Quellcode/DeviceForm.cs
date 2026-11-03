@@ -228,6 +228,7 @@ namespace WakeOnLan
         private ModernCheck Check(CardPanel card, string text, bool value, ref int y)
         {
             var c = new ModernCheck(text, k) { Location = new Point(S(18), y), Checked = value };
+            c.Width = card.Width - S(38); // Text links, Schalter rechts (wie in "Steuerung per Handy")
             card.Controls.Add(c);
             y += c.Height + S(8);
             return c;

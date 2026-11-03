@@ -106,6 +106,84 @@ BEDIENUNG
                              IP-Adresse, "Alle wecken" zuerst), Verknüpfung
                              "Alle wecken", Ordner der Geräteliste öffnen
 
+STEUERUNG PER HANDY
+-------------------
+"…" > Steuerung per Handy: Wake on LAN zeigt die Geräteliste zusätzlich als
+Webseite an. Auf dem Handy (oder Tablet, anderen PC) den QR-Code scannen
+und wecken – eine eigene App ist nicht nötig. Die Seite
+zeigt Gruppen, Status (grün/rot, wird alle 3 Sekunden aktualisiert), "Alle wecken",
+"Gruppe wecken", je Gerät "Wecken" und über "…" Herunterfahren, Neu starten
+bzw. Über IPMI ausschalten (mit Bestätigung). Hell/dunkel wie das Handy,
+Akzentfarbe wie Windows.
+
+Der Dialog: links die Einstellungen (Schalter), rechts QR-Code, Link,
+Anleitung und Windows-Firewall.
+
+Einrichten:
+  1. Schalter "Steuerung per Handy einschalten", Port (Standard 8770) und
+     unter "Festlegen …" ein Passwort (mindestens 8 Zeichen, zweimal
+     eingeben).
+  2. "Adresse für das Handy": Rechnername, IP-Adresse oder Domain/DynDNS-Name
+     – daraus entstehen Link und QR-Code im Dialog.
+  3. Speichern. Die Windows-Firewall-Freigabe "Wake on LAN (Handy)" für den
+     Port legt das Programm auf Nachfrage an (Administratorrechte).
+     Ist zusätzlich ein anderes Firewall-Programm aktiv (z. B. ESET), zeigt
+     der Dialog es an – dort muss eingehend TCP auf dem Port ebenfalls
+     erlaubt werden (bzw. das Heimnetz als vertrauenswürdig eingestuft sein).
+  4. QR-Code mit der Handy-Kamera scannen – das Handy ist sofort angemeldet,
+     ohne Passwort, und bleibt es. Der QR-Code enthält einen Einmal-Code
+     (10 Minuten und nur einmal gültig, wird im offenen Dialog von selbst
+     erneuert; wird ungültig, sobald der Dialog geschlossen wird). Den
+     Einmal-Code zeigt der QR-Code erst, wenn die Steuerung mit diesen
+     Einstellungen läuft – beim ersten Einrichten also nach dem Speichern
+     den Dialog noch einmal öffnen. Ohne Kamera: Link öffnen und Passwort
+     eingeben.
+     Im Browsermenü "Zum Startbildschirm hinzufügen" bzw.
+     "App installieren": öffnet sich dann wie eine App (ohne Browserleiste
+     nur mit HTTPS).
+  "Alle Handys abmelden" (bzw. ein neues Passwort) meldet alle Handys ab.
+
+Läuft im Hintergrund: Mit "Beim Schließen im Infobereich weiterlaufen"
+schließt "Schließen" bzw. das X nur das Fenster; das Programm bleibt mit
+Symbol im Infobereich aktiv (Rechtsklick: Öffnen, Alle wecken, Steuerung per
+Handy, Beenden). "Mit Windows starten" startet es bei der Anmeldung gleich im
+Infobereich (Eintrag "Wake on LAN" unter Autostart, Aufruf mit /hintergrund).
+Der Status der Geräte wird im Hintergrund nur geprüft, solange ein Handy die
+Seite offen hat oder ein Gerät gerade geweckt wird. Am besten auf einem PC,
+der ständig läuft.
+
+Verschlüsselung (HTTPS): Zertifikat z. B. von Let's Encrypt – entweder aus dem
+  Windows-Zertifikatspeicher (nur die Domain eintragen; gesucht wird unter
+  "Eigene Zertifikate" des Benutzers und des Computers sowie "Webhosting";
+  genommen wird immer das neueste gültige Zertifikat mit privatem Schlüssel,
+  Verlängerungen z. B. durch win-acme werden alle 30 Minuten übernommen;
+  liegt es beim Computer, braucht der eigene Benutzer Lesezugriff auf den
+  privaten Schlüssel: certlm.msc > Zertifikat > Alle Aufgaben > Private
+  Schlüssel verwalten) oder als Zertifikatsdatei:
+  .crt/.pem/.cer mit privatem Schlüssel (.key/.pem, unverschlüsselt, RSA oder
+  ECDSA; liegt er daneben, wird er vorgeschlagen) oder .pfx/.p12 mit Kennwort.
+  Am besten die Datei mit der ganzen Kette (fullchain); sonst lädt Windows die
+  Zwischenzertifikate nach. Der Name im Zertifikat muss zur "Adresse für das
+  Handy" passen. Ein erneuertes Zertifikat (gleiche Datei) übernimmt das
+  Programm automatisch, ohne Neustart. Ruft jemand die Seite mit http:// auf,
+  wird auf https:// umgeleitet. Im Heimnetz muss der Name auf diesen PC bzw.
+  den Router zeigen (z. B. Fritzbox: Portfreigabe gilt auch im Heimnetz, oder
+  lokaler DNS-Eintrag).
+
+Zugriff von unterwegs:
+  - Per VPN ins Heimnetz (z. B. Fritzbox/WireGuard): nichts weiter nötig.
+  - Per Portfreigabe im Router: "Auch aus dem Internet erreichbar" einschalten
+    (nur mit HTTPS) und im Router den TCP-Port auf diesen PC weiterleiten;
+    als Adresse den DynDNS-Namen aus dem Zertifikat eintragen. Das Passwort
+    muss dann mindestens 12 Zeichen haben. Schutz: nach 5 falschen
+    Passwörtern (oder QR-Codes) ist eine Adresse 10 Minuten gesperrt; nach 15
+    Fehlversuchen in einer Stunde
+    (alle Adressen zusammen) wird die Anmeldung von außen 1 Stunde gesperrt,
+    im Heimnetz geht es weiter. Anmeldungen und Sperren stehen im Verlauf.
+  Ohne diese Option nimmt die Seite nur Verbindungen aus dem Heimnetz bzw.
+  per VPN an (private Adressen); Anfragen aus dem Internet werden sofort
+  getrennt.
+
 Aus alten Skripten übernehmen: Ordner mit den Dateien
 "Wake on LAN (<Gerät>).bat" auswählen. Übernommen werden die MAC-Adressen,
 die IPMI-Angaben samt Kennwortdatei und aus "Wake on LAN (Alle PCs).bat"
@@ -120,6 +198,8 @@ KOMMANDOZEILE
   "Wake on LAN.exe" Büro-PC Spiele-PC   mehrere Geräte
   "Wake on LAN.exe" /alle               alle Geräte von "Alle wecken"
   "Wake on LAN.exe" "/gruppe:Server"    alle Geräte einer Gruppe
+  "Wake on LAN.exe" /hintergrund        nur im Infobereich starten
+                                        (für den Autostart)
   "Wake on LAN.exe" /?                  Hilfe
 
 Ohne Fenster. Eine Windows-Benachrichtigung zeigt "Wecke …" und später
@@ -133,12 +213,47 @@ DATEIEN
   Geräteliste    %LOCALAPPDATA%\Wake on LAN\Geräte.xml
                  (wird erst beim ersten Speichern angelegt)
   Verlauf        %LOCALAPPDATA%\Wake on LAN\Verlauf.log
+  Handy          Einstellungen in Geräte.xml (Passwort nur als Prüfwert, Kennwort
+                 des Zertifikats verschlüsselt; nicht im Export). Der private
+                 Schlüssel einer PEM-Datei wird als Windows-Schlüssel
+                 "Wake on LAN HTTPS" des Benutzers abgelegt.
   Programm       Wake on LAN.exe, benötigt .NET Framework 4.5 oder neuer
                  (in Windows 10 und 11 enthalten)
 
 
 VERSIONEN
 ---------
+  1.18.2026.1103 "Steuerung per Handy" dreispaltig (Einstellungen, HTTPS,
+                 Handy nebeneinander) – passt jetzt auch auf Full-HD-
+                 Bildschirme, vorher waren Speichern/Abbrechen dort
+                 abgeschnitten
+  1.17.2026.1103 Neu erstellt (Screenshots), sonst wie 1.16
+  1.16.2026.1102 Zeitplan: Wochentage als Auswahlknöpfe (passten mit den neuen
+                 Schaltern nicht mehr in das Fenster); Schalter in "Gerät
+                 bearbeiten" rechtsbündig; Zertifikat auch im Speicher
+                 "Webhosting" (win-acme) gesucht, Hinweis bei fehlendem
+                 Zugriff auf den Schlüssel; Einmal-Code des QR-Codes wird
+                 beim Schließen des Dialogs ungültig; Firewall-Prüfung meldet
+                 kein "Öffentlich" mehr wegen eines Zusatzadapters (z. B.
+                 Hyper-V, VPN) und zeigt weitere Firewall-Programme (z. B. ESET)
+  1.15.2026.1102 Steuerung per Handy: Schalter statt Häkchen; der QR-Code
+                 meldet das Handy ohne Passwort an (Einmal-Code,
+                 10 Minuten, erneuert sich selbst); Passwort
+                 über "Festlegen …" zweimal eingeben; Zertifikat auch aus
+                 dem Windows-Zertifikatspeicher (nach Domain)
+  1.14.2026.1102 Steuerung per Handy: Geräteliste als Webseite für Handy und
+                 Tablet (Passwort, QR-Code, als App auf dem Startbildschirm),
+                 optional verschlüsselt mit eigenem Zertifikat (z. B. Let's
+                 Encrypt, wird nach dem Erneuern automatisch übernommen) und
+                 optional aus dem Internet erreichbar (Portfreigabe, mit
+                 Sperre nach falschen Passwörtern); Firewall-Freigabe auf Knopfdruck;
+                 im Infobereich weiterlaufen und mit Windows starten
+                 (/hintergrund); nur noch ein Programmfenster (zweiter Start
+                 holt das laufende nach vorne); ein verschobener Autostart-
+                 Eintrag wird wie die Zeitpläne auf den neuen Ordner umgestellt
+  1.13.2026.1102 Programm verschoben: Zeitpläne mit nicht mehr vorhandenem
+                 Programmpfad werden beim Start automatisch auf den neuen
+                 Ordner umgestellt (Sprungliste wird ohnehin neu geschrieben)
   1.12.2026.1101 Dunkle Titelleiste bleibt auch erhalten, wenn Windows das
                  Fenster neu aufbaut; Auswahlfelder ("Status prüfen über",
                  Zeitplan-Ziel) mit Text links und Pfeil rechts; Beschriftung

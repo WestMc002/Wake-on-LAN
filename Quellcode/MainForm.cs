@@ -8,12 +8,13 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
 namespace WakeOnLan
 {
-    internal sealed class MainForm : Form
+    internal sealed class MainForm : Form, IRemoteHost
     {
         private const int CheckIntervalSeconds = 15;
         private const int WakingCheckSeconds = 3;
@@ -39,14 +40,25 @@ namespace WakeOnLan
         private bool _dirty;
         private DateTime _lastSave = DateTime.Now;
 
+        // Steuerung per Handy und Weiterlaufen im Infobereich
+        private WebServer _web, _pendingWeb;
+        private int _webGeneration;
+        private string _webError;
+        private bool _startHidden, _started, _exit, _trayHintShown;
+        private ContextMenuStrip _trayMenu;
+
         [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
         private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
 
-        /// <summary>demo = true: Beispieldaten für die Screenshots (kein Ping, kein Timer, nichts wird gespeichert).</summary>
-        public MainForm(DeviceStore store, bool demo = false)
+        /// <summary>
+        /// demo = true: Beispieldaten für die Screenshots (kein Ping, kein Timer, nichts wird gespeichert).
+        /// startHidden = true: nur im Infobereich starten (Autostart mit /hintergrund).
+        /// </summary>
+        public MainForm(DeviceStore store, bool demo = false, bool startHidden = false)
         {
             _store = store;
             _demo = demo;
+            _startHidden = startHidden && !demo;
             Theme.Refresh();
             Text = Ui.AppName;
             Icon = Ui.WindowIcon();
@@ -136,12 +148,41 @@ namespace WakeOnLan
             if (!_demo)
             {
                 _notifier = new Notifier();
-                _notifier.Clicked += (s, e) => { if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal; Activate(); };
+                _notifier.Clicked += (s, e) => ShowFromTray();
             }
             BuildRows();
             _timer.Tick += (s, e) => Tick();
-            if (!_demo) Shown += (s, e) => { _timer.Start(); Tick(); };
+            if (!_demo) Shown += (s, e) => StartUp();
             Theme.Apply(this);
+        }
+
+        /// <summary>Start mit /hintergrund: Fenster gar nicht erst anzeigen, nur das Symbol im Infobereich.</summary>
+        protected override void SetVisibleCore(bool value)
+        {
+            if (_startHidden)
+            {
+                _startHidden = false;
+                if (!IsHandleCreated) CreateHandle();
+                value = false;
+                BeginInvoke(new Action(StartUp));
+            }
+            base.SetVisibleCore(value);
+        }
+
+        /// <summary>Einmal nach dem Start: Statusprüfung, Zeitpläne, Handy-Steuerung, Infobereich.</summary>
+        private void StartUp()
+        {
+            if (_started) return;
+            _started = true;
+            _timer.Start();
+            Tick();
+            RepairSchedules();
+            if (Autostart.Repair()) History.Add("Autostart", "auf neuen Programmpfad umgestellt (" + Application.StartupPath + ")");
+            StartRemote();
+            UpdateTray();
+            // Zweiter Programmstart (z. B. Verknüpfung) holt dieses Fenster aus dem Infobereich
+            if (Program.ShowSignal != null)
+                ThreadPool.RegisterWaitForSingleObject(Program.ShowSignal, (st, timeout) => Post(ShowFromTray), null, -1, false);
         }
 
         private int S(float v) { return (int)Math.Round(v * k); }
@@ -154,11 +195,39 @@ namespace WakeOnLan
             base.OnKeyDown(e);
         }
 
+        /// <summary>Im Hintergrund weiterlaufen: Handy-Steuerung ist eingeschaltet und "Im Infobereich weiterlaufen" gewählt.</summary>
+        private bool KeepRunning { get { return !_demo && _store.Remote.Enabled && _store.Remote.Background; } }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            if (!_exit && !_demo && e.CloseReason == CloseReason.UserClosing && KeepRunning)
+            {
+                // Schließen = in den Infobereich; Beenden über das Symbol bzw. das Menü
+                e.Cancel = true;
+                SaveWindowSize();
+                if (_dirty) { try { _store.Save(); } catch { } _dirty = false; }
+                Hide();
+                UpdateTray();
+                if (!_trayHintShown && _notifier != null)
+                {
+                    _trayHintShown = true;
+                    _notifier.Show(Ui.AppName, "Läuft im Infobereich weiter – die Steuerung per Handy bleibt erreichbar. Beenden: Rechtsklick auf das Symbol.", ToolTipIcon.Info);
+                }
+                base.OnFormClosing(e);
+                return;
+            }
             _timer.Stop();
+            if (_web != null) { _web.Dispose(); _web = null; }
+            if (_pendingWeb != null) { _pendingWeb.Dispose(); _pendingWeb = null; }
             if (_dirty) { try { _store.Save(); } catch { } _dirty = false; }
             if (_notifier != null) _notifier.Dispose();
+            SaveWindowSize();
+            base.OnFormClosing(e);
+        }
+
+        private void SaveWindowSize()
+        {
+            if (_demo) return;
             var size = WindowState == FormWindowState.Normal ? Size : RestoreBounds.Size;
             if (size.Width != _store.WindowWidth || size.Height != _store.WindowHeight || _store.LayoutVersion != DeviceStore.CurrentLayout)
             {
@@ -167,7 +236,34 @@ namespace WakeOnLan
                 _store.WindowHeight = size.Height;
                 try { _store.Save(); } catch { }
             }
-            base.OnFormClosing(e);
+        }
+
+        /// <summary>Fenster aus dem Infobereich (bzw. minimiert) wieder anzeigen.</summary>
+        private void ShowFromTray()
+        {
+            if (IsDisposed) return;
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+            BringToFront();
+            UpdateTray();
+        }
+
+        /// <summary>Programm wirklich beenden (auch wenn es sonst im Infobereich weiterläuft).</summary>
+        private void ExitProgram()
+        {
+            if (FocusOpenDialog()) return;
+            _exit = true;
+            Close();
+        }
+
+        /// <summary>Ist gerade ein Dialog offen (z. B. aus dem Infobereich aufgerufen), diesen nach vorne holen statt weiterzumachen.</summary>
+        private bool FocusOpenDialog()
+        {
+            if (OwnedForms.Length == 0) return false;
+            ShowFromTray();
+            OwnedForms[0].Activate();
+            return true;
         }
 
         // ================================================================== Liste
@@ -293,8 +389,16 @@ namespace WakeOnLan
 
         private void Tick()
         {
-            if (WindowState == FormWindowState.Minimized) return;
             var now = DateTime.Now;
+            if (_dirty && (now - _lastSave).TotalSeconds >= 60)
+            {
+                try { _store.Save(); } catch { }
+                _dirty = false;
+                _lastSave = now;
+            }
+            // Status nur prüfen, wenn jemand hinschaut: Fenster sichtbar, Handy verbunden oder ein Gerät wird gerade geweckt
+            bool watched = (Visible && WindowState != FormWindowState.Minimized) || (_web != null && _web.RecentlyUsed);
+            if (!watched && !_rows.Any(r => r.WakeStart.HasValue)) return;
             foreach (var row in _rows)
             {
                 if (row.WakeStart.HasValue && (now - row.WakeStart.Value).TotalSeconds > WakingTimeoutSeconds)
@@ -314,12 +418,6 @@ namespace WakeOnLan
                 if ((now - row.LastCheck).TotalSeconds >= interval) StartCheck(row);
             }
             foreach (var h in _headers) h.Invalidate(); // "2 von 3 online"
-            if (_dirty && (now - _lastSave).TotalSeconds >= 60)
-            {
-                try { _store.Save(); } catch { }
-                _dirty = false;
-                _lastSave = now;
-            }
         }
 
         private void CheckAll()
@@ -381,7 +479,8 @@ namespace WakeOnLan
             public Control Button;
         }
 
-        private void Wake(DeviceRow row, WakeAllRun all)
+        /// <summary>Gerät wecken. via: Herkunft für den Verlauf (z. B. "Handy"), sonst null.</summary>
+        private void Wake(DeviceRow row, WakeAllRun all, string via = null)
         {
             if (row.Busy) { if (all != null) Finish(all, true); return; }
             row.Busy = true;
@@ -397,7 +496,7 @@ namespace WakeOnLan
                 {
                     row.Busy = false;
                     if (result.FoundIp != null && result.FoundIp != row.Device.LastIp) { row.Device.LastIp = result.FoundIp; _dirty = true; }
-                    History.Add(device.Name, (result.Ok ? "geweckt: " : "Fehler beim Wecken: ") + result.Message);
+                    History.Add(device.Name, (result.Ok ? "geweckt: " : "Fehler beim Wecken: ") + result.Message + (via != null ? " (" + via + ")" : ""));
                     if (!row.IsDisposed)
                     {
                         if (result.Ok && row.State != DeviceState.Online && device.HasStatusTarget)
@@ -432,12 +531,12 @@ namespace WakeOnLan
         }
 
         /// <summary>Mehrere Geräte gleichzeitig wecken (Alle wecken, Gruppe wecken).</summary>
-        private void WakeMany(List<DeviceRow> rows, string label, Control button)
+        private void WakeMany(List<DeviceRow> rows, string label, Control button, string via = null)
         {
             var run = new WakeAllRun { Remaining = rows.Count, Total = rows.Count, Label = label, Button = button };
             if (button != null) button.Enabled = false;
-            SetMessage(label + ": wecke " + rows.Count + (rows.Count == 1 ? " Gerät …" : " Geräte …"), Ui.Muted);
-            foreach (var r in rows) Wake(r, run);
+            SetMessage(label + ": wecke " + rows.Count + (rows.Count == 1 ? " Gerät …" : " Geräte …") + (via != null ? " (" + via + ")" : ""), Ui.Muted);
+            foreach (var r in rows) Wake(r, run, via);
         }
 
         private void Finish(WakeAllRun run, bool ok)
@@ -893,6 +992,235 @@ namespace WakeOnLan
             return menu;
         }
 
+        // ================================================================== Steuerung per Handy
+
+        /// <summary>Webserver nach den Einstellungen (neu) starten; Zertifikat laden kann dauern -> im Hintergrund.</summary>
+        private void StartRemote()
+        {
+            int generation = ++_webGeneration;
+            if (_web != null) { _web.Dispose(); _web = null; }
+            if (_pendingWeb != null) { _pendingWeb.Dispose(); _pendingWeb = null; }
+            _webError = null;
+            if (_demo || !_store.Remote.Enabled) { UpdateTray(); return; }
+            var server = new WebServer(_store.Remote, this);
+            _pendingWeb = server;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                string error = null;
+                try { server.Start(); }
+                catch (Exception ex) { error = ex.Message; }
+                Post(() =>
+                {
+                    if (_pendingWeb == server) _pendingWeb = null;
+                    if (generation != _webGeneration || IsDisposed) { server.Dispose(); return; }
+                    if (error != null)
+                    {
+                        server.Dispose();
+                        _webError = error;
+                        SetMessage("Steuerung per Handy: " + error, Ui.Red);
+                        History.Add("Handy", "Start fehlgeschlagen: " + error);
+                        if (!Visible) Notify("Steuerung per Handy: " + error, ToolTipIcon.Warning);
+                    }
+                    else
+                    {
+                        _web = server;
+                        CheckFirewallLater();
+                    }
+                    UpdateTray();
+                });
+            });
+        }
+
+        /// <summary>Fehlt die Firewall-Freigabe (z. B. nach dem Verschieben des Programms), einen Hinweis zeigen.</summary>
+        private void CheckFirewallLater()
+        {
+            int port = _store.Remote.Port;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                string problem = Firewall.Problem(port);
+                if (problem == null) return;
+                Post(() => SetMessage("Steuerung per Handy: " + problem + " (siehe „…“ › „Steuerung per Handy“).", Ui.Yellow));
+            });
+        }
+
+        private void OpenRemoteSettings()
+        {
+            if (FocusOpenDialog()) return;
+            if (!Visible) ShowFromTray();
+            using (var f = new RemoteForm(_store, false, _web != null, _webError))
+                if (f.ShowDialog(this) != DialogResult.OK) return;
+            try { _store.Save(); }
+            catch (Exception ex) { SetMessage("Speichern fehlgeschlagen: " + ex.Message, Ui.Red); }
+            StartRemote();
+            UpdateTray();
+            SetMessage(_store.Remote.Enabled ? "Steuerung per Handy: " + _store.Remote.Url(_store.Remote.Address) : "Steuerung per Handy ausgeschaltet.", Ui.Muted);
+        }
+
+        /// <summary>Symbol im Infobereich: dauerhaft, solange das Programm im Hintergrund weiterläuft oder versteckt ist.</summary>
+        private void UpdateTray()
+        {
+            if (_notifier == null || IsDisposed) return;
+            bool persistent = KeepRunning || !Visible;
+            if (persistent && _trayMenu == null) _trayMenu = BuildTrayMenu();
+            string tip = Ui.AppName;
+            if (_store.Remote.Enabled) tip += _web != null ? " – Handy: Port " + _web.Port : " – Handy: nicht gestartet";
+            _notifier.SetPersistent(persistent, _trayMenu, tip);
+        }
+
+        private ContextMenuStrip BuildTrayMenu()
+        {
+            var b = new ModernMenuBuilder(this);
+            var menu = b.CreateMenu();
+            menu.Items.Add(b.Item("Öffnen", MenuHelper.Open, ShowFromTray));
+            menu.Items.Add(b.Item("Alle wecken", MenuHelper.Power, () => { WakeAll(); }));
+            menu.Items.Add(b.Item("Steuerung per Handy …", MenuHelper.Phone, OpenRemoteSettings));
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(b.Item("Beenden", MenuHelper.Close, ExitProgram));
+            return menu;
+        }
+
+        /// <summary>Aufruf aus dem Webserver (anderer Thread) im Fenster-Thread ausführen.</summary>
+        private string OnUi(Func<string> f, string fallback)
+        {
+            if (IsDisposed || !IsHandleCreated) return fallback;
+            if (!InvokeRequired) return f();
+            try { return (string)Invoke(f); }
+            catch (Exception) { return fallback; }
+        }
+
+        string IRemoteHost.Snapshot()
+        {
+            return OnUi(BuildSnapshot, "{\"error\":\"Programm wird beendet\"}");
+        }
+
+        string IRemoteHost.Act(string action, string name, string mode)
+        {
+            return OnUi(() => RemoteAct(action, name ?? "", mode ?? ""), Answer(false, "Das Programm wird gerade beendet."));
+        }
+
+        string IRemoteHost.ThemeCss()
+        {
+            return OnUi(BuildThemeCss, "");
+        }
+
+        void IRemoteHost.Log(string text)
+        {
+            History.Add("Handy", text);
+        }
+
+        private static string Answer(bool ok, string text)
+        {
+            return "{\"ok\":" + Json.Bool(ok) + ",\"text\":" + Json.Str(text) + "}";
+        }
+
+        /// <summary>Geräte nach Gruppen (Reihenfolge wie im Fenster) mit Status als JSON für die Handy-Seite.</summary>
+        private string BuildSnapshot()
+        {
+            var sb = new StringBuilder();
+            string msgKind = _message.ForeColor == Ui.Red ? "error" : _message.ForeColor == Ui.Green ? "ok" : _message.ForeColor == Ui.Yellow ? "warn" : "info";
+            sb.Append("{\"app\":").Append(Json.Str(Ui.AppName))
+              .Append(",\"pc\":").Append(Json.Str(Environment.MachineName))
+              .Append(",\"version\":").Append(Json.Str(Ui.Version))
+              .Append(",\"year\":").Append(DateTime.Now.Year)
+              .Append(",\"all\":").Append(_store.Devices.Count(d => d.InAll))
+              .Append(",\"message\":").Append(Json.Str(_message.Text))
+              .Append(",\"messageKind\":").Append(Json.Str(msgKind))
+              .Append(",\"groups\":[");
+            bool grouped = _store.Groups().Count > 0;
+            var sections = grouped ? _store.Groups().Concat(new[] { "" }).ToList() : new List<string> { "" };
+            bool firstGroup = true;
+            foreach (string g in sections)
+            {
+                var devices = _store.Devices.Where(d => Device.SameGroup(d.Group, g)).ToList();
+                if (devices.Count == 0) continue;
+                if (!firstGroup) sb.Append(',');
+                firstGroup = false;
+                sb.Append("{\"name\":").Append(Json.Str(g))
+                  .Append(",\"title\":").Append(Json.Str(grouped ? (g.Length > 0 ? g : "Ohne Gruppe") : ""))
+                  .Append(",\"devices\":[");
+                for (int i = 0; i < devices.Count; i++)
+                {
+                    var d = devices[i];
+                    var row = _rows.FirstOrDefault(r => r.Device == d);
+                    string kind = "unknown", text = d.HasStatusTarget ? "Prüfe …" : "Kein Status";
+                    if (row != null) text = row.WebStatus(out kind);
+                    string error = row != null && !row.LastResultOk ? row.LastResult : "";
+                    if (i > 0) sb.Append(',');
+                    sb.Append("{\"name\":").Append(Json.Str(d.Name))
+                      .Append(",\"kind\":").Append(Json.Str(kind))
+                      .Append(",\"text\":").Append(Json.Str(text))
+                      .Append(",\"ip\":").Append(Json.Str(d.Host.Length > 0 ? d.Host : d.LastIp))
+                      .Append(",\"inAll\":").Append(Json.Bool(d.InAll))
+                      .Append(",\"shutdown\":").Append(Json.Bool(d.AllowShutdown))
+                      .Append(",\"ipmi\":").Append(Json.Bool(d.UseIpmi))
+                      .Append(",\"error\":").Append(Json.Str(error))
+                      .Append('}');
+                }
+                sb.Append("]}");
+            }
+            sb.Append("]}");
+            return sb.ToString();
+        }
+
+        private string RemoteAct(string action, string name, string mode)
+        {
+            const string via = "Handy";
+            switch (action)
+            {
+                case "wake":
+                    {
+                        var row = _rows.FirstOrDefault(r => string.Equals(r.Device.Name, name, StringComparison.OrdinalIgnoreCase));
+                        if (row == null) return Answer(false, "„" + name + "“ ist nicht in der Liste.");
+                        if (row.Busy) return Answer(true, row.Device.Name + " wird gerade geweckt.");
+                        Wake(row, null, via);
+                        return Answer(true, "Wecke " + row.Device.Name + " …");
+                    }
+                case "group":
+                    {
+                        var rows = _rows.Where(r => Device.SameGroup(r.Device.Group, name)).ToList();
+                        if (rows.Count == 0) return Answer(false, "In dieser Gruppe sind keine Geräte.");
+                        string title = name.Length > 0 ? name : "Ohne Gruppe";
+                        var header = _headers.FirstOrDefault(h => Device.SameGroup(h.Group, name));
+                        WakeMany(rows, "Gruppe „" + title + "“", header != null ? header.WakeButton : null, via);
+                        return Answer(true, "Gruppe „" + title + "“: wecke " + rows.Count + (rows.Count == 1 ? " Gerät …" : " Geräte …"));
+                    }
+                case "all":
+                    {
+                        var rows = _rows.Where(r => r.Device.InAll).ToList();
+                        if (rows.Count == 0) return Answer(false, "Kein Gerät ist für „Alle wecken“ vorgesehen.");
+                        WakeMany(rows, "Alle wecken", _wakeAll, via);
+                        return Answer(true, "Wecke " + rows.Count + (rows.Count == 1 ? " Gerät …" : " Geräte …"));
+                    }
+                case "shutdown":
+                    {
+                        var d = _store.Find(name);
+                        if (d == null) return Answer(false, "„" + name + "“ ist nicht in der Liste.");
+                        bool ipmi = mode == "ipmi", restart = mode == "restart";
+                        if (ipmi ? !d.UseIpmi : !d.AllowShutdown) return Answer(false, "Für " + d.Name + " ist das nicht eingerichtet.");
+                        DoShutdown(d, restart, ipmi, via);
+                        return Answer(true, d.Name + ": " + (ipmi ? "über IPMI herunterfahren" : restart ? "neu starten" : "herunterfahren") + " …");
+                    }
+            }
+            return Answer(false, "Unbekannte Aktion.");
+        }
+
+        /// <summary>Windows-Akzentfarbe für die Handy-Seite (hell und dunkel), wie im Fenster.</summary>
+        private string BuildThemeCss()
+        {
+            Accent.Refresh();
+            var p = Accent.Palette;
+            Color light = p != null ? p[4] : Color.FromArgb(37, 99, 235);
+            Color lightHover = p != null ? p[5] : Color.FromArgb(29, 78, 216);
+            Color lightText = p != null ? p[5] : Color.FromArgb(29, 78, 216);
+            Color dark = p != null ? p[1] : Color.FromArgb(96, 165, 250);
+            Color darkHover = p != null ? p[2] : Color.FromArgb(147, 180, 255);
+            Color darkText = p != null ? p[1] : Color.FromArgb(147, 180, 255);
+            Func<Color, string> hex = c => "#" + c.R.ToString("X2") + c.G.ToString("X2") + c.B.ToString("X2");
+            Func<Color, string> on = c => Accent.Luminance(c) > 0.5 ? "#141414" : "#FFFFFF";
+            return ":root{--akzent:" + hex(light) + ";--akzent-hover:" + hex(lightHover) + ";--akzent-schrift:" + hex(lightText) + ";--auf-akzent:" + on(light) + "}\n" +
+                "@media (prefers-color-scheme: dark){:root{--akzent:" + hex(dark) + ";--akzent-hover:" + hex(darkHover) + ";--akzent-schrift:" + hex(darkText) + ";--auf-akzent:" + on(dark) + "}}\n";
+        }
+
         // ================================================================== Beispieldaten (Screenshots)
 
         /// <summary>Feste Zustände für die Screenshots: online, wird geweckt, ausgeschaltet, keine Antwort, kein Status.</summary>
@@ -969,6 +1297,7 @@ namespace WakeOnLan
             });
             notify.Checked = _store.Notify;
             menu.Items.Add(notify);
+            menu.Items.Add(b.Item("Steuerung per Handy …", MenuHelper.Phone, OpenRemoteSettings));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(b.Item("Geräteliste exportieren …", MenuHelper.Save, ExportDevices));
             menu.Items.Add(b.Item("Geräteliste importieren …", MenuHelper.Open, ImportDevices));
@@ -982,8 +1311,29 @@ namespace WakeOnLan
                 try { System.IO.Directory.CreateDirectory(_store.Folder); } catch { }
                 Ui.Open(_store.Folder);
             }));
+            if (KeepRunning)
+            {
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(b.Item("Beenden (auch im Infobereich)", MenuHelper.Close, ExitProgram));
+            }
             menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
             menu.Show(owner, location);
+        }
+
+        /// <summary>Nach dem Verschieben des Programms: Zeitpläne mit altem Programmpfad still auf den neuen Pfad umstellen.</summary>
+        private void RepairSchedules()
+        {
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                int n;
+                try { n = Schedules.RepairPaths(); } catch { return; }
+                if (n == 0) return;
+                Post(() =>
+                {
+                    SetMessage(n + (n == 1 ? " Zeitplan" : " Zeitpläne") + " auf den neuen Programmordner umgestellt.", Ui.Muted);
+                    History.Add("Zeitplan", n + " auf neuen Programmpfad umgestellt (" + Application.StartupPath + ")");
+                });
+            });
         }
 
         // ================================================================== Benachrichtigung, Herunterfahren, Export/Import
@@ -1003,8 +1353,15 @@ namespace WakeOnLan
             string what = ipmi ? "über IPMI herunterfahren" : restart ? "neu starten" : "herunterfahren";
             if (MessageBox.Show(this, "„" + d.Name + "“ wirklich " + what + "?" + (ipmi ? "" : "\r\n\r\nNicht gespeicherte Daten auf dem Gerät können verloren gehen."),
                 Ui.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            DoShutdown(d, restart, ipmi, null);
+        }
+
+        /// <summary>Herunterfahren ohne Rückfrage (nach der Abfrage im Fenster bzw. auf dem Handy).</summary>
+        private void DoShutdown(Device d, bool restart, bool ipmi, string via)
+        {
+            string what = ipmi ? "über IPMI herunterfahren" : restart ? "neu starten" : "herunterfahren";
             var copy = d.Clone();
-            SetMessage(d.Name + ": " + what + " …", Ui.Muted);
+            SetMessage(d.Name + ": " + what + " …" + (via != null ? " (" + via + ")" : ""), Ui.Muted);
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 WakeResult r;
@@ -1014,7 +1371,7 @@ namespace WakeOnLan
                 {
                     if (r.FoundIp != null && r.FoundIp != d.LastIp) { d.LastIp = r.FoundIp; _dirty = true; }
                     SetMessage(d.Name + ": " + r.Message, r.Ok ? Ui.Muted : Ui.Red);
-                    History.Add(d.Name, (r.Ok ? "" : "Fehler: ") + r.Message);
+                    History.Add(d.Name, (r.Ok ? "" : "Fehler: ") + r.Message + (via != null ? " (" + via + ")" : ""));
                 });
             });
         }
@@ -1332,6 +1689,36 @@ namespace WakeOnLan
                     color = Ui.Disabled; dot = Ui.Disabled; filled = false;
                     return Device.HasStatusTarget ? "" : "Kein Status";
             }
+        }
+
+        /// <summary>Status für die Handy-Seite: Text wie in der Zeile und Art (online, offline, off, error, checking, waking, busy, unknown).</summary>
+        internal string WebStatus(out string kind)
+        {
+            Color color, dot;
+            bool filled;
+            string text = StatusText(out color, out dot, out filled);
+            if (Busy) kind = "busy";
+            else if (WakeStart.HasValue && State != DeviceState.Online) kind = "waking";
+            else
+            {
+                switch (State)
+                {
+                    case DeviceState.Online: kind = "online"; break;
+                    case DeviceState.Offline: kind = "offline"; break;
+                    case DeviceState.PowerOff: kind = "off"; break;
+                    case DeviceState.Error: kind = "error"; break;
+                    case DeviceState.Checking: kind = "checking"; break;
+                    default: kind = Device.HasStatusTarget ? "checking" : "unknown"; break;
+                }
+            }
+            // Lief die Prüfung im Hintergrund nicht (niemand hat hingeschaut), ist der alte Stand nicht verlässlich
+            if ((kind == "online" || kind == "offline" || kind == "off" || kind == "error") && Device.HasStatusTarget && (DateTime.Now - LastCheck).TotalSeconds > 60)
+            {
+                kind = "checking";
+                text = "Prüfe …";
+            }
+            if (text.Length == 0) text = kind == "checking" ? "Prüfe …" : "Kein Status";
+            return text;
         }
 
         /// <summary>"vor 5 Min.", "vor 2 Std.", "vor 3 Tagen", ältere als Datum.</summary>

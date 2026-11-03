@@ -6,7 +6,7 @@ ECHO #                                     #
 ECHO #  Autor: Guenther Schoder            #
 ECHO #         www.westmc002.de            #
 ECHO #                                     #
-ECHO #  Datum: 01.11.2026 / 01.11.2026     #
+ECHO #  Datum: 01.11.2026 / 02.11.2026     #
 ECHO #######################################
 ECHO.
 
@@ -27,7 +27,7 @@ SET "NAMESPACE=WakeOnLan"
 SET "SRCDIR=Quellcode"
 SET "RESDIR=Resources"
 SET "ICON=WakeOnLan.ico"
-SET "EXTRAREFS=/win32manifest:Quellcode\app.manifest /resource:Resources\Demo.xml,Demo.xml /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.Security.dll /r:Microsoft.CSharp.dll /lib:%WINDIR%\Microsoft.NET\Framework\v4.0.30319\WPF /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll"
+SET "EXTRAREFS=/win32manifest:Quellcode\app.manifest /resource:Resources\Demo.xml,Demo.xml /resource:Resources\Web\index.html,Web.index.html /resource:Resources\Web\app.css,Web.app.css /resource:Resources\Web\app.js,Web.app.js /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.Security.dll /r:Microsoft.CSharp.dll /lib:%WINDIR%\Microsoft.NET\Framework\v4.0.30319\WPF /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll"
 SET "EXE=%NAME%.exe"
 SET "NEWEXE=%NAME%.neu.exe"
 

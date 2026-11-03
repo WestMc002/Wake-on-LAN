@@ -104,6 +104,7 @@ namespace WakeOnLan
 
                         Shot(backdrop, () => new DeviceForm(edit, store, false) { StartPosition = FormStartPosition.CenterScreen }, Path.Combine(outDir, "geraet-" + suffix + ".png"));
                         Shot(backdrop, () => new AboutDialog(null), Path.Combine(outDir, "info-" + suffix + ".png"));
+                        Shot(backdrop, () => new RemoteForm(store, true, true, null) { StartPosition = FormStartPosition.CenterScreen }, Path.Combine(outDir, "handy-" + suffix + ".png"));
                     }
                 }
                 return true;
