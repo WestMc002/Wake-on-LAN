@@ -217,8 +217,8 @@ DATEIEN
                  des Zertifikats verschlüsselt; nicht im Export). Der private
                  Schlüssel einer PEM-Datei wird als Windows-Schlüssel
                  "Wake on LAN HTTPS" des Benutzers abgelegt.
-  Programm       Wake on LAN.exe, benötigt .NET Framework 4.5 oder neuer
-                 (in Windows 10 und 11 enthalten)
+  Programm       Wake on LAN.exe, benötigt .NET Framework 4.7.2 oder neuer
+                 (in Windows 10 ab Version 1803 und in Windows 11 enthalten)
 
 
 VERSIONEN

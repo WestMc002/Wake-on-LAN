@@ -45,7 +45,7 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 3. Starten und Geräte anlegen (oder über „…“ › „Aus alten Skripten übernehmen“ einlesen).
 4. Zum schnellen Wecken das Programm an die Taskleiste anheften – die Sprungliste (Rechtsklick) zeigt dann Gruppen und Geräte.
 
-Voraussetzungen: Windows 10 oder 11 (.NET Framework 4.5 oder neuer ist dort vorhanden). Für IPMI wird `ipmitool` gebraucht (z. B. aus den Dell OpenManage BMC Utilities).
+Voraussetzungen: Windows 10 (ab Version 1803) oder 11 mit .NET Framework 4.7.2 oder neuer – ist dort vorhanden. Für IPMI wird `ipmitool` gebraucht (z. B. aus den Dell OpenManage BMC Utilities).
 Die Geräteliste liegt unter `%LOCALAPPDATA%\Wake on LAN\Geräte.xml`, der Programmordner bleibt unverändert.
 
 ## Selbst kompilieren

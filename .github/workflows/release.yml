@@ -72,7 +72,7 @@ jobs:
               '2. `Wake on LAN.exe` starten und Geräte anlegen – oder über `…` › Aus alten Skripten übernehmen.',
               '3. Das Programm an die Taskleiste anheften: Die Sprungliste (Rechtsklick) zeigt Alle wecken, Gruppen und Geräte.',
               '',
-              'Voraussetzung: Windows 10/11 mit .NET Framework 4.5 oder neuer. Für IPMI wird `ipmitool` gebraucht. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.'
+              'Voraussetzung: Windows 10 (ab Version 1803) oder 11 mit .NET Framework 4.7.2 oder neuer. Für IPMI wird `ipmitool` gebraucht. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.'
             )
             $lines | Set-Content -Path "notes\$ver.md" -Encoding utf8   # pwsh 7: UTF-8 ohne BOM
             Write-Host "---- $ver"; Get-Content "notes\$ver.md"
