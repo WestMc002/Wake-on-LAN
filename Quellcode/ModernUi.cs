@@ -297,12 +297,15 @@ namespace WakeOnLan
             UpdateSize();
         }
 
+        /// <summary>Feste Breite in Pixeln (0 = nach dem Text). Für Auswahlfelder und Knöpfe mit wechselndem Text.</summary>
+        public int FixedWidth;
+
         public void UpdateSize()
         {
             int tw = string.IsNullOrEmpty(Text) ? 0 : TextRenderer.MeasureText(Text, Font).Width;
             int icon = Glyph == '\0' ? 0 : (int)((string.IsNullOrEmpty(Text) ? 16 : 26) * k);
             int pad = (int)((string.IsNullOrEmpty(Text) ? 24 : 36) * k);
-            Size = new Size(tw + icon + pad, (int)(HeightUnits * k));
+            Size = new Size(FixedWidth > 0 ? FixedWidth : tw + icon + pad, (int)(HeightUnits * k));
         }
 
         protected override void OnTextChanged(EventArgs e)

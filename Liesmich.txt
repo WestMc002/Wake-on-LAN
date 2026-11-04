@@ -57,7 +57,19 @@ feste Zuweisung (DHCP-Reservierung) im Router.
 
 BEDIENUNG
 ---------
-  Gerät hinzufügen           Knopf oben rechts (Strg+N)
+  Gerät hinzufügen           Knopf oben rechts: "Gerät eingeben …" (Strg+N)
+                             oder "Im Netzwerk suchen …"
+  Im Netzwerk suchen         findet eingeschaltete Geräte im eigenen Netz per
+                             ARP (weckt nichts, auch bei blockiertem Ping) mit
+                             IP, MAC und Rechnername; bereits vorhandene sind
+                             markiert. Ein Gerät auswählen: öffnet "Gerät
+                             hinzufügen" schon ausgefüllt; mehrere: werden
+                             direkt angelegt (Weckpaket an die MAC, IP mit
+                             automatischer Suche über die MAC). Ausgeschaltete
+                             Geräte erscheinen nicht – also vorher einschalten
+                             Netz: Auswahl der eigenen Netze (Heimnetz zuerst)
+                             oder Von/Bis selbst eintragen (bis 4096 Adressen)
+                             und auf "Suchen" klicken (Enter)
   Bearbeiten                 Doppelklick auf das Gerät
   Weitere Funktionen         Rechtsklick oder "…" am Gerät: Wecken, Bearbeiten,
                              Duplizieren, Nach oben/unten, Verknüpfung auf dem
@@ -223,6 +235,13 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.21.2026.1104 Netzwerksuche startet erst mit "Suchen"; Auswahlfeld "Netz"
+                 und Knopf "Suchen" mit fester Breite
+  1.20.2026.1104 Netzwerksuche: Netz auswählen (Heimnetz zuerst) oder Bereich
+                 Von/Bis eintragen; Ergebnisliste in Spalten (Name, IP, MAC)
+                 ohne abgeschnittene Texte
+  1.19.2026.1104 Gerät hinzufügen über eine Netzwerksuche (IP, MAC und
+                 Rechnername der eingeschalteten Geräte im eigenen Netz)
   1.18.2026.1103 "Steuerung per Handy" dreispaltig (Einstellungen, HTTPS,
                  Handy nebeneinander) – passt jetzt auch auf Full-HD-
                  Bildschirme, vorher waren Speichern/Abbrechen dort

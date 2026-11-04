@@ -36,6 +36,7 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 - **Sprungliste und Kommandozeile** – Alle wecken, Gruppen und Geräte direkt aus der Taskleiste; `"Wake on LAN.exe" Büro-PC`, `/alle`, `"/gruppe:Server"`; Desktop-Verknüpfungen auf Knopfdruck
 - **Benachrichtigungen** – Windows-Meldung, sobald das geweckte Gerät online ist
 - **Suche, Verlauf, Export/Import** – Suche nach Name, IP, MAC oder Gruppe; Verlauf aller Aktionen; Geräteliste als XML sichern und übertragen
+- **Netzwerksuche** – „Gerät hinzufügen“ › „Im Netzwerk suchen“ findet eingeschaltete Geräte im eigenen Netz (per ARP, mit IP, MAC und Rechnername) und übernimmt sie mit einem Klick
 - **Übernahme alter Skripte** – liest Batch-Skripte der Form `Wake on LAN (<Gerät>).bat` ein
 
 ## Installation

@@ -72,7 +72,7 @@ namespace WakeOnLan
             _header = new HeaderPanel(Ui.AppName, "Geräte im Netzwerk einschalten – per Weckpaket, Anstoßen oder IPMI", k);
             var headButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, BackColor = Ui.Back, Margin = Padding.Empty, Padding = Padding.Empty };
             var add = new ModernButton("Gerät hinzufügen", MenuHelper.Add, true, k);
-            add.Click += (s, e) => AddDevice();
+            add.Click += (s, e) => ShowAddMenu(add);
             var more = new ModernButton("", MenuHelper.More, false, k) { Margin = Padding.Empty };
             _tip.SetToolTip(more, "Weitere Funktionen");
             more.Click += (s, e) => ShowMainMenu(more, new Point(0, more.Height));
@@ -369,9 +369,12 @@ namespace WakeOnLan
             });
             var add = new ModernButton("Gerät hinzufügen", MenuHelper.Add, true, k) { Location = new Point(S(20), S(92)) };
             add.Click += (s, e) => AddDevice();
-            var import = new ModernButton("Aus alten Skripten übernehmen …", MenuHelper.Folder, false, k) { Location = new Point(add.Right + S(10), S(92)) };
+            var scan = new ModernButton("Im Netzwerk suchen …", MenuHelper.Search, false, k) { Location = new Point(add.Right + S(10), S(92)) };
+            scan.Click += (s, e) => AddFromScan();
+            var import = new ModernButton("Aus alten Skripten übernehmen …", MenuHelper.Folder, false, k) { Location = new Point(scan.Right + S(10), S(92)) };
             import.Click += (s, e) => ImportScripts();
             card.Controls.Add(add);
+            card.Controls.Add(scan);
             card.Controls.Add(import);
             return card;
         }
@@ -559,6 +562,46 @@ namespace WakeOnLan
         }
 
         // ================================================================== Bearbeiten
+
+        /// <summary>Knopf "Gerät hinzufügen": selbst eingeben oder im Netzwerk suchen.</summary>
+        private void ShowAddMenu(Control button)
+        {
+            var b = new ModernMenuBuilder(this);
+            var menu = b.CreateMenu();
+            menu.Items.Add(b.Item("Gerät eingeben …", MenuHelper.Edit, AddDevice));
+            menu.Items.Add(b.Item("Im Netzwerk suchen …", MenuHelper.Search, AddFromScan));
+            menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
+            menu.Show(button, new Point(0, button.Height));
+        }
+
+        /// <summary>Geräte über die Netzwerksuche übernehmen: eines zum Bearbeiten, mehrere direkt (Name, IP, MAC).</summary>
+        private void AddFromScan()
+        {
+            List<Arp.Found> picked;
+            using (var f = new ScanForm(_store))
+            {
+                if (f.ShowDialog(this) != DialogResult.OK) return;
+                picked = f.Selected.ToList();
+            }
+            if (picked.Count == 1)
+            {
+                var d = DeviceForm.Edit(this, ScanForm.ToDevice(picked[0], _store), _store, true);
+                if (d == null) return;
+                _store.Devices.Add(d);
+                SaveAndRebuild();
+                SetMessage(d.Name + " hinzugefügt.", Ui.Muted);
+                return;
+            }
+            var names = new List<string>();
+            foreach (var found in picked)
+            {
+                var d = ScanForm.ToDevice(found, _store);
+                _store.Devices.Add(d);
+                names.Add(d.Name);
+            }
+            SaveAndRebuild();
+            SetMessage(names.Count + " Geräte hinzugefügt: " + string.Join(", ", names) + " – bei Bedarf per Doppelklick anpassen.", Ui.Green);
+        }
 
         private void AddDevice()
         {
@@ -1259,6 +1302,7 @@ namespace WakeOnLan
             var b = new ModernMenuBuilder(this);
             var menu = b.CreateMenu();
             menu.Items.Add(b.Item("Gerät hinzufügen …", MenuHelper.Add, AddDevice));
+            menu.Items.Add(b.Item("Im Netzwerk suchen …", MenuHelper.Search, AddFromScan));
             menu.Items.Add(b.Item("Neue Gruppe …", MenuHelper.Group, NewGroup));
             var sort = b.Item("Sortieren", MenuHelper.Sort, null);
             sort.DropDownItems.Add(b.Item("Nach Name (A–Z)", MenuHelper.Sort, () => SortDevices("Name",

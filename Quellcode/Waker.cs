@@ -587,30 +587,7 @@ namespace WakeOnLan
         /// <summary>Alle Adressen der eigenen Netze (bis /22) per ARP anfragen; füllt die ARP-Tabelle von Windows.</summary>
         private static void Sweep()
         {
-            var targets = new List<IPAddress>();
-            try
-            {
-                foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
-                {
-                    if (ni.OperationalStatus != OperationalStatus.Up) continue;
-                    if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback || ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
-                    foreach (var ua in ni.GetIPProperties().UnicastAddresses)
-                    {
-                        if (ua.Address.AddressFamily != AddressFamily.InterNetwork || ua.IPv4Mask == null) continue;
-                        uint ip = ToUInt(ua.Address), mask = ToUInt(ua.IPv4Mask);
-                        if ((ip >> 16) == ((169u << 8) | 254u)) continue; // APIPA
-                        uint hosts = ~mask;
-                        if (hosts < 2 || hosts > 1024) continue; // nur kleine Netze (bis /22)
-                        uint net = ip & mask;
-                        for (uint h = 1; h < hosts; h++)
-                        {
-                            uint a = net | h;
-                            if (a != ip) targets.Add(FromUInt(a));
-                        }
-                    }
-                }
-            }
-            catch { }
+            var targets = Targets();
             if (targets.Count == 0) return;
             Parallel.ForEach(targets, new ParallelOptions { MaxDegreeOfParallelism = 64 }, t =>
             {
@@ -622,6 +599,166 @@ namespace WakeOnLan
                 }
                 catch { }
             });
+        }
+
+        /// <summary>Ein gefundenes Gerät der Netzwerksuche.</summary>
+        internal sealed class Found
+        {
+            public string Ip = "", Mac = "", HostName = "";
+            /// <summary>Eigene Netzwerkkarte dieses PCs.</summary>
+            public bool Self;
+        }
+
+        /// <summary>Ein IP-Bereich für die Netzwerksuche (erste bis letzte Adresse).</summary>
+        internal sealed class Range
+        {
+            public uint First, Last;
+            /// <summary>Anzeige, z. B. "192.168.178.0/24 · Ethernet".</summary>
+            public string Name = "";
+            public int Count { get { return Last >= First ? (int)Math.Min(int.MaxValue, (long)Last - First + 1) : 0; } }
+            public string FirstText { get { return FromUInt(First).ToString(); } }
+            public string LastText { get { return FromUInt(Last).ToString(); } }
+        }
+
+        /// <summary>Höchstens so viele Adressen je Suche.</summary>
+        public const int MaxScan = 4096;
+
+        /// <summary>Die eigenen Netze als Bereiche (ohne Netz- und Broadcast-Adresse), je Netzwerkkarte.</summary>
+        public static List<Range> LocalRanges()
+        {
+            var list = new List<Range>();
+            // zuerst das Netz mit Standard-Gateway (Heimnetz), virtuelle Adapter (VPN, Hyper-V) danach
+            foreach (var n in LocalNetworks().OrderBy(x => x.Gateway ? 0 : 1))
+            {
+                int bits = 0;
+                for (uint m = n.Mask; m != 0; m <<= 1) bits++;
+                uint net = n.Ip & n.Mask, last = net | ~n.Mask;
+                if (list.Any(r => r.First == net + 1 && r.Last == last - 1)) continue;
+                list.Add(new Range { First = net + 1, Last = last - 1, Name = FromUInt(net) + "/" + bits + (n.Name.Length > 0 ? " · " + n.Name : "") });
+            }
+            return list;
+        }
+
+        /// <summary>IPv4-Adresse als Zahl (null, wenn ungültig).</summary>
+        public static uint? ParseIp(string text)
+        {
+            IPAddress a;
+            if (!IPAddress.TryParse((text ?? "").Trim(), out a) || a.AddressFamily != AddressFamily.InterNetwork) return null;
+            return ToUInt(a);
+        }
+
+        /// <summary>
+        /// Netzwerksuche für "Gerät hinzufügen": alle Adressen des Bereichs per ARP anfragen und die antwortenden
+        /// Geräte mit MAC-Adresse und (wenn auflösbar) Rechnernamen liefern. ARP weckt nichts und findet auch Geräte, deren
+        /// Firewall Ping blockiert – aber nur im eigenen Netz (über Router/VPN gibt es keine Antwort).
+        /// progress(geprüft, gesamt) wird aus Hintergrund-Threads aufgerufen; cancel() bricht ab.
+        /// </summary>
+        public static List<Found> Scan(Range range, Action<int, int> progress, Func<bool> cancel)
+        {
+            if (range.Count <= 0) throw new ArgumentException("Die erste Adresse muss vor der letzten liegen.");
+            if (range.Count > MaxScan) throw new ArgumentException("Höchstens " + MaxScan + " Adressen auf einmal (das entspricht einem /20-Netz).");
+            var found = new Dictionary<string, Found>();
+            var sync = new object();
+            var nets = LocalNetworks();
+            var own = new HashSet<uint>(nets.Select(n => n.Ip));
+            // eigene Netzwerkkarten (antworten nicht auf ARP an sich selbst)
+            foreach (var n in nets)
+                if (n.Mac.Length > 0 && n.Ip >= range.First && n.Ip <= range.Last)
+                    found[FromUInt(n.Ip).ToString()] = new Found { Ip = FromUInt(n.Ip).ToString(), Mac = n.Mac, HostName = Environment.MachineName, Self = true };
+            var targets = new List<IPAddress>();
+            for (uint a = range.First; a <= range.Last && a != 0; a++)
+            {
+                if (!own.Contains(a)) targets.Add(FromUInt(a));
+                if (a == uint.MaxValue) break;
+            }
+            int done = 0;
+            Parallel.ForEach(targets, new ParallelOptions { MaxDegreeOfParallelism = 64 }, (t, state) =>
+            {
+                if (cancel()) { state.Stop(); return; }
+                try
+                {
+                    var mac = new byte[6];
+                    int len = mac.Length;
+                    if (SendARP(BitConverter.ToInt32(t.GetAddressBytes(), 0), 0, mac, ref len) == 0 && len == 6)
+                    {
+                        string m = string.Join(":", mac.Select(b => b.ToString("X2")));
+                        if (m != "00:00:00:00:00:00" && m != "FF:FF:FF:FF:FF:FF")
+                            lock (sync) found[t.ToString()] = new Found { Ip = t.ToString(), Mac = m };
+                    }
+                }
+                catch { }
+                progress(Interlocked.Increment(ref done), targets.Count);
+            });
+            var list = found.Values.ToList();
+            // Rechnernamen (Router bzw. DNS im Heimnetz), parallel und mit kurzer Wartezeit
+            Parallel.ForEach(list.Where(f => !f.Self).ToList(), new ParallelOptions { MaxDegreeOfParallelism = 16 }, f =>
+            {
+                if (cancel()) return;
+                f.HostName = ReverseName(f.Ip);
+            });
+            return list.OrderBy(f => ToUInt(IPAddress.Parse(f.Ip))).ToList();
+        }
+
+        /// <summary>Rechnername zu einer IP (höchstens 2 Sekunden), ohne Domain-Anhang wie ".fritz.box"; sonst "".</summary>
+        private static string ReverseName(string ip)
+        {
+            try
+            {
+                var task = Dns.GetHostEntryAsync(ip);
+                if (!task.Wait(2000)) return "";
+                string name = task.Result.HostName ?? "";
+                if (name == ip) return "";
+                int dot = name.IndexOf('.');
+                return dot > 0 ? name.Substring(0, dot) : name;
+            }
+            catch { return ""; }
+        }
+
+        private struct LocalNet { public uint Ip, Mask; public string Mac, Name; public bool Gateway; }
+
+        private static List<LocalNet> LocalNetworks()
+        {
+            var nets = new List<LocalNet>();
+            try
+            {
+                foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                    if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback || ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+                    byte[] phys = ni.GetPhysicalAddress().GetAddressBytes();
+                    bool gateway = ni.GetIPProperties().GatewayAddresses.Any(gw => gw.Address.AddressFamily == AddressFamily.InterNetwork && !gw.Address.Equals(IPAddress.Any));
+                    string mac = phys.Length == 6 ? string.Join(":", phys.Select(b => b.ToString("X2"))) : "";
+                    foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily != AddressFamily.InterNetwork || ua.IPv4Mask == null) continue;
+                        uint ip = ToUInt(ua.Address), mask = ToUInt(ua.IPv4Mask);
+                        if ((ip >> 16) == ((169u << 8) | 254u)) continue; // APIPA
+                        uint hosts = ~mask;
+                        if (hosts < 2 || hosts > 1024) continue; // nur kleine Netze (bis /22)
+                        nets.Add(new LocalNet { Ip = ip, Mask = mask, Mac = mac, Name = ni.Name ?? "", Gateway = gateway });
+                    }
+                }
+            }
+            catch { }
+            return nets;
+        }
+
+        /// <summary>Alle Adressen der eigenen Netze (bis /22) außer den eigenen.</summary>
+        private static List<IPAddress> Targets()
+        {
+            var targets = new List<IPAddress>();
+            var seen = new HashSet<uint>();
+            var own = new HashSet<uint>(LocalNetworks().Select(n => n.Ip));
+            foreach (var n in LocalNetworks())
+            {
+                uint hosts = ~n.Mask, net = n.Ip & n.Mask;
+                for (uint h = 1; h < hosts; h++)
+                {
+                    uint a = net | h;
+                    if (!own.Contains(a) && seen.Add(a)) targets.Add(FromUInt(a));
+                }
+            }
+            return targets;
         }
 
         private static uint ToUInt(IPAddress a)
