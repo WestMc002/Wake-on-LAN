@@ -20,10 +20,9 @@
 <body>
 <header class="kopf">
   <img class="kopf-icon" src="/icon-192.png" alt="">
-  <div class="kopf-text">
-    <h1>Wake on LAN</h1>
-    <p id="unterzeile">Geräte im Netzwerk einschalten</p>
-  </div>
+  <h1>Wake on LAN</h1>
+  <!-- Versions-Plakette wie im Programm: Tippen zeigt die Info (Copyright, Logo, Website) -->
+  <button id="version" class="plakette" type="button" title="Info anzeigen" hidden>Version</button>
   <button id="abmelden" class="symbol" type="button" title="Abmelden" hidden>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>
   </button>
@@ -63,13 +62,20 @@
   <button id="blatt-abbrechen" class="sekundaer gross" type="button">Abbrechen</button>
 </div>
 
-<footer class="fuss">
-  <span id="copyright" class="leise">© Wake on LAN</span>
-  <a class="signatur" href="https://www.westmc002.de" target="_blank" rel="noopener">
-    <img src="/logo.png" alt="">
-    <span><b>Günther Schoder</b><br><span class="leise">www.westmc002.de</span></span>
-  </a>
-</footer>
+<!-- Info (Tippen auf die Version) statt Fußzeile: spart Platz in der Liste -->
+<div id="info-hintergrund" class="blatt-hintergrund" hidden></div>
+<div id="info" class="blatt info" role="dialog" aria-modal="true" aria-labelledby="info-titel" hidden>
+  <img class="info-logo" src="/logo.png" alt="">
+  <h3 id="info-titel">Wake on LAN</h3>
+  <p id="info-version" class="info-version"></p>
+  <dl class="info-daten">
+    <dt>Entwickler</dt><dd>Günther Schoder</dd>
+    <dt>Website</dt><dd><a href="https://www.westmc002.de" target="_blank" rel="noopener">www.westmc002.de</a></dd>
+    <dt>Verbunden mit</dt><dd id="info-pc">–</dd>
+  </dl>
+  <p id="copyright" class="leise mitte">© Günther Schoder</p>
+  <button id="info-schliessen" class="primaer gross" type="button">Schließen</button>
+</div>
 <script src="/app.js"></script>
 </body>
 </html>

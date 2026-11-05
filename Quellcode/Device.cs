@@ -204,9 +204,14 @@ namespace WakeOnLan
         public int WindowWidth, WindowHeight;
         /// <summary>Stand des Fensteraufbaus, zu dem die gespeicherte Fenstergröße gehört.</summary>
         public int LayoutVersion;
-        public const int CurrentLayout = 2;
+        public const int CurrentLayout = 3;
         /// <summary>Windows-Benachrichtigungen (z. B. "Büro-PC ist online").</summary>
         public bool Notify = true;
+        /// <summary>Navigation links angepinnt (immer offen) oder einklappbar.</summary>
+        public bool NavPinned = true;
+        /// <summary>Automatisch (höchstens alle 20 Stunden) auf GitHub nach einer neuen Version suchen.</summary>
+        public bool UpdateCheck = true;
+        public DateTime UpdateLast = DateTime.MinValue;
         /// <summary>Zugeklappte Gruppen in der Liste ("" = Ohne Gruppe).</summary>
         public readonly HashSet<string> Collapsed = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
         /// <summary>Eigene Reihenfolge der Gruppen (neue Gruppen kommen alphabetisch dahinter).</summary>
@@ -250,6 +255,11 @@ namespace WakeOnLan
             var root = doc.Root;
             if (root == null) return;
             Notify = Bool(root, "Benachrichtigungen", true);
+            NavPinned = Bool(root, "NavigationAngepinnt", true);
+            UpdateCheck = Bool(root, "UpdatePruefen", true);
+            DateTime last;
+            UpdateLast = DateTime.TryParse(Str(root, "UpdateZuletzt"), System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out last) ? last : DateTime.MinValue;
             var win = root.Element("Fenster");
             if (win != null)
             {
@@ -353,6 +363,9 @@ namespace WakeOnLan
             if (full)
             {
                 root.Add(new XAttribute("Benachrichtigungen", Notify));
+                root.Add(new XAttribute("NavigationAngepinnt", NavPinned));
+                root.Add(new XAttribute("UpdatePruefen", UpdateCheck));
+                if (UpdateLast > DateTime.MinValue) root.Add(new XAttribute("UpdateZuletzt", UpdateLast.ToString("o", System.Globalization.CultureInfo.InvariantCulture)));
                 if (WindowWidth > 0 && WindowHeight > 0)
                     root.Add(new XElement("Fenster", new XAttribute("Breite", WindowWidth), new XAttribute("Hoehe", WindowHeight), new XAttribute("Layout", LayoutVersion)));
                 foreach (var g in Collapsed) root.Add(new XElement("Zugeklappt", new XAttribute("Gruppe", g)));

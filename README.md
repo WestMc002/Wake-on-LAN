@@ -37,13 +37,15 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 - **Benachrichtigungen** – Windows-Meldung, sobald das geweckte Gerät online ist
 - **Suche, Verlauf, Export/Import** – Suche nach Name, IP, MAC oder Gruppe; Verlauf aller Aktionen; Geräteliste als XML sichern und übertragen
 - **Netzwerksuche** – „Gerät hinzufügen“ › „Im Netzwerk suchen“ findet eingeschaltete Geräte im eigenen Netz (per ARP, mit IP, MAC und Rechnername) und übernimmt sie mit einem Klick
+- **Update-Prüfung** – sucht höchstens einmal täglich auf GitHub nach einer neuen Version; „Jetzt aktualisieren“ lädt sie herunter, ersetzt die EXE und startet neu (abschaltbar im Info-Fenster)
+- **Navigation** – links Geräte, Zeitpläne, Verlauf, Steuerung per Handy und Einstellungen; anpinnbar oder eingeklappt nur mit Symbolen (wie bei Sync Pilot)
 - **Übernahme alter Skripte** – liest Batch-Skripte der Form `Wake on LAN (<Gerät>).bat` ein
 
 ## Installation
 
 1. Unter [Releases](../../releases) die neueste `Wake-on-LAN-<Version>.zip` herunterladen.
 2. `Wake on LAN.exe` (und `Liesmich.txt`) in einen eigenen Ordner mit Schreibrechten entpacken, z. B. `C:\Tools\Wake on LAN`.
-3. Starten und Geräte anlegen (oder über „…“ › „Aus alten Skripten übernehmen“ einlesen).
+3. Starten und Geräte anlegen (oder über „Einstellungen“ › „Aus alten Skripten übernehmen“ einlesen).
 4. Zum schnellen Wecken das Programm an die Taskleiste anheften – die Sprungliste (Rechtsklick) zeigt dann Gruppen und Geräte.
 
 Voraussetzungen: Windows 10 (ab Version 1803) oder 11 mit .NET Framework 4.7.2 oder neuer – ist dort vorhanden. Für IPMI wird `ipmitool` gebraucht (z. B. aus den Dell OpenManage BMC Utilities).

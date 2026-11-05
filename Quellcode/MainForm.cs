@@ -10,6 +10,7 @@ using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace WakeOnLan
@@ -31,6 +32,33 @@ namespace WakeOnLan
         private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer { Interval = 1000 };
         private readonly List<DeviceRow> _rows = new List<DeviceRow>();
         private readonly List<GroupHeader> _headers = new List<GroupHeader>();
+
+        // Navigation links (wie bei Sync Pilot): angepinnt = immer offen und schiebt den Inhalt;
+        // sonst nur Symbole, ☰ klappt sie über dem Inhalt aus, nach der Auswahl bzw. beim Verlassen klappt sie wieder ein
+        private readonly Panel _nav, _navSpacer;
+        private readonly SignatureFooter _footer;
+        private readonly NavButton _navMenu, _navPin, _navDevices, _navSchedules, _navHistory, _navRemote, _navMore, _navQuit;
+
+        // Update-Prüfung über GitHub: erst 15 s nach dem Start, danach stündlich nachsehen, ob 24 h seit der letzten Prüfung vorbei sind
+        private readonly System.Windows.Forms.Timer _updateTimer = new System.Windows.Forms.Timer { Interval = 15000 };
+        private UpdateInfo _update;          // neuere Version (null = keine)
+        private bool _updateRunning, _installing, _updateBalloon, _updateBalloonShown;
+        private string _updateError;     // Fehler der letzten Prüfung von Hand (Info-Fenster)
+        private readonly Panel _updateHost;  // Hinweisleiste oben im Inhalt, nur sichtbar bei neuer Version
+        private readonly UpdateBar _updateBar;
+        /// <summary>Neustart durch das Update-Skript (--nach-update): Ergebnis melden.</summary>
+        public static bool AfterUpdate;
+        private readonly System.Windows.Forms.Timer _navTimer = new System.Windows.Forms.Timer { Interval = 400 };
+        private bool _navOpen;
+
+        // Ansichten im selben Fenster (wie Sync Pilot): Zeitpläne, Verlauf und Steuerung per Handy erscheinen im
+        // Inhaltsbereich statt als eigenes Fenster. Technisch das bisherige Fenster ohne Rahmen, eingebettet.
+        private readonly Panel _viewHost, _viewBody;
+        private readonly Label _viewTitle;
+        private Panel _searchBar;
+        private Form _view;
+        private Action<DialogResult> _viewDone;
+        private EventHandler _viewResize;
 
         private readonly bool _demo;
         private readonly Notifier _notifier;
@@ -71,17 +99,13 @@ namespace WakeOnLan
             // ---------- Kopf ----------
             _header = new HeaderPanel(Ui.AppName, "Geräte im Netzwerk einschalten – per Weckpaket, Anstoßen oder IPMI", k);
             var headButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, BackColor = Ui.Back, Margin = Padding.Empty, Padding = Padding.Empty };
-            var add = new ModernButton("Gerät hinzufügen", MenuHelper.Add, true, k);
+            var add = new ModernButton("Gerät hinzufügen", MenuHelper.Add, true, k) { Margin = Padding.Empty };
             add.Click += (s, e) => ShowAddMenu(add);
-            var more = new ModernButton("", MenuHelper.More, false, k) { Margin = Padding.Empty };
-            _tip.SetToolTip(more, "Weitere Funktionen");
-            more.Click += (s, e) => ShowMainMenu(more, new Point(0, more.Height));
             headButtons.Controls.Add(add);
-            headButtons.Controls.Add(more);
-            _header.SetRight(headButtons);
+            _header.SetRight(headButtons, RightInset);
 
             // ---------- Suche ----------
-            var searchBar = new Panel { Dock = DockStyle.Top, Height = S(48), BackColor = Ui.Back };
+            var searchBar = _searchBar = new Panel { Dock = DockStyle.Top, Height = S(48), BackColor = Ui.Back };
             _search = new ModernTextBox(k) { Location = new Point(S(28), S(4)), Width = S(340) };
             _search.Box.HandleCreated += (s, e) => SendMessage(_search.Box.Handle, 0x1501 /* EM_SETCUEBANNER */, (IntPtr)1, "Suchen: Name, IP, MAC oder Gruppe (Strg+F)");
             _search.Box.TextChanged += (s, e) => { _filter = _search.Text.Trim(); BuildRows(); };
@@ -99,13 +123,13 @@ namespace WakeOnLan
                 WrapContents = false,
                 AutoScroll = true,
                 BackColor = Ui.Back,
-                Padding = new Padding(S(28), S(2), S(28), S(8))
+                Padding = new Padding(S(28), S(2), RightInset, S(8))
             };
             _list.ClientSizeChanged += (s, e) => FitRows();
             _list.MouseUp += (s, e) => { if (e.Button == MouseButtons.Right) ShowMainMenu(_list, e.Location); };
 
             // ---------- Knopfleiste ----------
-            _bar = new Panel { Dock = DockStyle.Bottom, Height = S(72), BackColor = Ui.Back, Padding = new Padding(S(28), S(16), S(28), S(16)) };
+            _bar = new Panel { Dock = DockStyle.Bottom, Height = S(72), BackColor = Ui.Back, Padding = new Padding(S(28), S(16), RightInset, S(16)) };
             var left = new FlowLayoutPanel { Dock = DockStyle.Left, AutoSize = true, WrapContents = false, BackColor = Ui.Back, Margin = Padding.Empty };
             _wakeAll = new ModernButton("Alle wecken", MenuHelper.Power, true, k);
             _wakeAll.Click += (s, e) => WakeAll();
@@ -114,8 +138,6 @@ namespace WakeOnLan
             _tip.SetToolTip(refresh, "Status aller Geräte jetzt prüfen (F5)");
             left.Controls.Add(_wakeAll);
             left.Controls.Add(refresh);
-            var close = new ModernButton("Schließen", '\0', false, k) { Dock = DockStyle.Right, Margin = Padding.Empty };
-            close.Click += (s, e) => Close();
             _message = new Label
             {
                 Dock = DockStyle.Fill,
@@ -127,19 +149,107 @@ namespace WakeOnLan
             };
             _bar.Controls.Add(_message);
             _bar.Controls.Add(left);
-            _bar.Controls.Add(close);
+            // kein Knopf "Schließen" (wie Sync Pilot): Fenster schließen über das X, ganz beenden über "Beenden" in der Navigation
 
+            // ---------- Navigation ----------
+            _navSpacer = new Panel { Dock = DockStyle.Left, BackColor = Ui.Back };
+            _nav = new Panel { BackColor = Ui.Back };
+            _nav.Paint += (s, e) =>
+            {
+                // ausgeklappt über dem Inhalt: feine Trennlinie rechts
+                if (_navOpen && !_store.NavPinned)
+                    using (var p = new Pen(Ui.Border)) e.Graphics.DrawLine(p, _nav.Width - 1, 0, _nav.Width - 1, _nav.Height);
+            };
+            _navMenu = AddNav("", MenuHelper.Menu, () =>
+            {
+                if (_store.NavPinned) SetNavPinned(false);
+                else { _navOpen = !_navOpen; ApplyNav(); }
+            });
+            _navMenu.AccessibleName = "Navigation aus- bzw. einklappen";
+            _tip.SetToolTip(_navMenu, "Navigation aus- bzw. einklappen");
+            _navPin = AddNav("", MenuHelper.Pin, () => SetNavPinned(!_store.NavPinned));
+            _navPin.IconOnly = true;
+            _navDevices = AddNav("Geräte", MenuHelper.Devices, () => { CloseNav(); CloseView(); });
+            _navDevices.Selected = true;
+            _navSchedules = AddNav("Zeitpläne", MenuHelper.Clock, () => ShowView(_navSchedules, new ScheduleForm(_store), null));
+            _navHistory = AddNav("Verlauf", MenuHelper.History, () => ShowView(_navHistory, new HistoryForm(), null));
+            _navRemote = AddNav("Steuerung per Handy", MenuHelper.Phone, OpenRemoteSettings);
+            // Einstellungen und übrige Funktionen (früher Knopf "…" oben rechts; auch per Rechtsklick in die freie
+            // Fläche der Liste). Unten wie bei Sync Pilot: Einstellungen (Zahnrad), Beenden (Ein/Aus)
+            _navMore = AddNav("Einstellungen", MenuHelper.Settings, () =>
+            {
+                CloseNav();
+                var current = _viewTitle.Tag as NavButton ?? _navDevices; // aktuelle Ansicht
+                current.Selected = false;
+                _navMore.Selected = true; // ausgewählt, solange das Menü offen ist
+                ShowMainMenu(_navMore, new Point(_navMore.Width + S(4), _navMore.Height), ToolStripDropDownDirection.AboveRight, () =>
+                {
+                    if (!_navMore.IsDisposed) _navMore.Selected = false;
+                    if (!current.IsDisposed) current.Selected = _viewTitle.Tag == current || (current == _navDevices && _view == null);
+                    if (_view == null && !_navDevices.IsDisposed) _navDevices.Selected = true;
+                });
+            });
+            // komplett beenden (sonst schließt das X nur das Fenster und das Programm läuft im Infobereich weiter)
+            _navQuit = AddNav("Beenden", MenuHelper.Power, () => { CloseNav(); ExitProgram(); });
+            _navQuit.AccessibleName = "Beenden (auch im Infobereich)";
+            _nav.Resize += (s, e) => LayoutNav();
+            _navTimer.Tick += (s, e) =>
+            {
+                // ausgeklappt, nicht angepinnt: wieder einklappen, sobald die Maus die Navigation verlässt
+                if (!_navOpen || _store.NavPinned || _nav.Capture || !Visible) return;
+                if (!_nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position)) { _navOpen = false; ApplyNav(); }
+            };
+            _navTimer.Start();
+            _footer = new SignatureFooter(k);
+
+            // ---------- Update-Hinweis (wie Fensterpositionen) ----------
+            _updateBar = new UpdateBar(k) { Dock = DockStyle.Fill };
+            _updateBar.Install.Click += async (s, e) => await InstallUpdate();
+            _updateBar.Page.Click += (s, e) => OpenReleasePage();
+            _updateBar.Later.Click += (s, e) => ShowUpdateBar(false);
+            _updateHost = new Panel { Dock = DockStyle.Top, Height = S(64), BackColor = Ui.Back, Padding = new Padding(S(28), S(10), RightInset, S(2)), Visible = false };
+            _updateHost.Controls.Add(_updateBar);
+
+            // Andockreihenfolge: Kopf und Fußzeile über die volle Breite, dann Navigation, dann Suche, Knopfleiste und Liste
+            // ---------- Ansicht im Inhaltsbereich (statt eigener Fenster) ----------
+            _viewTitle = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = S(56),
+                Font = new Font("Segoe UI Semibold", 20f),
+                ForeColor = Ui.Text,
+                BackColor = Ui.Back,
+                TextAlign = ContentAlignment.MiddleLeft,
+                UseMnemonic = false
+            };
+            _viewBody = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Back, AutoScroll = true };
+            _viewHost = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Back, Visible = false, Padding = new Padding(S(4), S(4), RightInset - S(24), S(4)) };
+            _viewHost.Controls.Add(_viewBody);
+            _viewHost.Controls.Add(_viewTitle);
+            // die eingebetteten Fenster haben selbst 24 Rand: Überschrift und Inhalt beginnen so beide bei 28
+            _viewTitle.Padding = new Padding(S(24), 0, 0, 0);
+
+            Controls.Add(_viewHost);
             Controls.Add(_list);
             Controls.Add(_bar);
-            Controls.Add(new SignatureFooter(k));
             Controls.Add(searchBar);
+            Controls.Add(_updateHost);
+            Controls.Add(_navSpacer);
+            Controls.Add(_footer);
             Controls.Add(_header);
+            Controls.Add(_nav); // nicht angedockt: liegt ausgeklappt über dem Inhalt
+            _nav.BringToFront();
+            Resize += (s, e) => ApplyNav();
+            _footer.LocationChanged += (s, e) => ApplyNav();
+            _header.SizeChanged += (s, e) => ApplyNav();
+            ApplyNav();
 
             // ---------- Fenstergröße ----------
-            MinimumSize = new Size(S(760), S(520));
-            // ab Layout 2 größer (Schalter "Alle wecken" in jeder Zeile); kleinere gespeicherte Größe aus älteren Versionen verwerfen
-            bool keep = _store.LayoutVersion >= DeviceStore.CurrentLayout && _store.WindowWidth > 0 && _store.WindowHeight > 0;
-            int w = keep ? _store.WindowWidth : S(1040);
+            MinimumSize = new Size(S(860), S(520));
+            // ab Layout 2 größer (Schalter "Alle wecken" in jeder Zeile); kleinere gespeicherte Größe aus älteren Versionen verwerfen.
+            // Layout 3: Navigation links – gespeicherte Breite aus Layout 2 um die Navigation verbreitern.
+            bool keep = _store.LayoutVersion >= 2 && _store.WindowWidth > 0 && _store.WindowHeight > 0;
+            int w = keep ? _store.WindowWidth + (_store.LayoutVersion < 3 ? S(230) : 0) : S(1260);
             int h = keep ? _store.WindowHeight : S(820);
             var wa = Screen.FromPoint(Cursor.Position).WorkingArea;
             Size = new Size(Math.Min(w, wa.Width), Math.Min(h, wa.Height));
@@ -148,7 +258,14 @@ namespace WakeOnLan
             if (!_demo)
             {
                 _notifier = new Notifier();
-                _notifier.Clicked += (s, e) => ShowFromTray();
+                _notifier.Clicked += (s, e) =>
+                {
+                    ShowFromTray();
+                    // Klick auf die Meldung "Update verfügbar" startet das Update (mit Rückfrage)
+                    if (_updateBalloon && _update != null) { _updateBalloon = false; Post(() => { var t = InstallUpdate(); }); }
+                    else _updateBalloon = false;
+                };
+                AboutDialog.Updates = MakeUpdateHooks(); // Info-Fenster: Stand, "Jetzt prüfen", automatisch prüfen
             }
             BuildRows();
             _timer.Tick += (s, e) => Tick();
@@ -180,6 +297,7 @@ namespace WakeOnLan
             if (Autostart.Repair()) History.Add("Autostart", "auf neuen Programmpfad umgestellt (" + Application.StartupPath + ")");
             StartRemote();
             UpdateTray();
+            StartUpdateTimer();
             // Zweiter Programmstart (z. B. Verknüpfung) holt dieses Fenster aus dem Infobereich
             if (Program.ShowSignal != null)
                 ThreadPool.RegisterWaitForSingleObject(Program.ShowSignal, (st, timeout) => Post(ShowFromTray), null, -1, false);
@@ -187,8 +305,357 @@ namespace WakeOnLan
 
         private int S(float v) { return (int)Math.Round(v * k); }
 
+        /// <summary>
+        /// Einheitlicher rechter Rand des Inhalts (Kopf-Knopf, Hinweisleiste, Zeilen, Knopfleiste):
+        /// 28 plus die Breite der senkrechten Bildlaufleiste, die rechts in der Liste ihren festen Platz hat.
+        /// </summary>
+        private int RightInset { get { return S(28) + SystemInformation.VerticalScrollBarWidth; } }
+
+        // ================================================================== Navigation
+
+        private NavButton AddNav(string text, char glyph, Action click)
+        {
+            var b = new NavButton(text, glyph, k);
+            b.Click += (s, e) => click();
+            _nav.Controls.Add(b);
+            return b;
+        }
+
+        /// <summary>Ausgeklappte (nicht angepinnte) Navigation nach einer Auswahl wieder einklappen.</summary>
+        private void CloseNav()
+        {
+            if (!_store.NavPinned && _navOpen) { _navOpen = false; ApplyNav(); }
+        }
+
+        // ================================================================== Ansichten im selben Fenster
+
+        /// <summary>
+        /// Zeigt ein bisheriges Dialogfenster als Ansicht im Inhaltsbereich (ohne Rahmen, eingebettet).
+        /// "Schließen", "Abbrechen" bzw. "Speichern" des Fensters führen zurück zur Geräteliste; done erhält das Ergebnis.
+        /// </summary>
+        private void ShowView(NavButton item, Form f, Action<DialogResult> done)
+        {
+            CloseNav();
+            if (_view != null && _viewTitle.Tag == item) { f.Dispose(); return; } // schon offen
+            CloseView();
+            if (!Visible) ShowFromTray();
+
+            var size = f.ClientSize;
+            // Verlauf und anpassbare Ansichten (Steuerung per Handy) füllen den Bereich; feste Fenster behalten ihre Größe
+            bool fill = !(f is FixedForm) || f is IViewLayout;
+            f.TopLevel = false;
+            f.FormBorderStyle = FormBorderStyle.None;
+            f.ShowInTaskbar = false;
+            f.ClientSize = size;
+            if (fill) f.Dock = DockStyle.Fill;
+            else f.Location = new Point(0, 0);
+            // Knöpfe mit DialogResult schließen ein eingebettetes Fenster nicht von selbst
+            foreach (var b in AllButtons(f))
+            {
+                var button = b;
+                if (button.DialogResult != DialogResult.None)
+                    button.Click += (s, e) => { f.DialogResult = button.DialogResult; BeginInvoke(new Action(f.Close)); };
+            }
+            f.FormClosed += (s, e) => BeginInvoke(new Action(() => EndView(f)));
+
+            _view = f;
+            _viewDone = done;
+            _viewTitle.Text = item.Text;
+            _viewTitle.Tag = item;
+            foreach (var n in new[] { _navDevices, _navSchedules, _navHistory, _navRemote }) n.Selected = n == item;
+
+            _list.Visible = false;
+            _searchBar.Visible = false;
+            _bar.Visible = false;
+            _viewBody.Controls.Add(f);
+            _viewHost.Visible = true;
+            _viewHost.BringToFront();
+            _nav.BringToFront();
+            f.Show();
+            var adaptive = f as IViewLayout;
+            if (adaptive != null)
+            {
+                // an die Breite anpassen (z. B. Karten untereinander); das Fenster scrollt selbst, nur senkrecht
+                f.AutoScroll = true;
+                f.AutoScrollMargin = new Size(0, S(24));
+                _viewResize = (s, e) =>
+                {
+                    if (_view != f || f.IsDisposed) return;
+                    // Positionen gelten in einem gescrollten Fenster relativ zur Ansicht: erst nach oben, dann zurück
+                    int y = -f.AutoScrollPosition.Y;
+                    f.AutoScrollPosition = new Point(0, 0);
+                    f.SuspendLayout();
+                    adaptive.Arrange(f.ClientSize.Width);
+                    f.ResumeLayout(true);
+                    f.AutoScrollPosition = new Point(0, y);
+                };
+                f.ClientSizeChanged += _viewResize;
+                _viewResize(this, EventArgs.Empty);
+            }
+            f.Focus();
+        }
+
+        private static IEnumerable<Button> AllButtons(Control c)
+        {
+            foreach (Control child in c.Controls)
+            {
+                var b = child as Button;
+                if (b != null) yield return b;
+                foreach (var inner in AllButtons(child)) yield return inner;
+            }
+        }
+
+        /// <summary>Offene Ansicht schließen (wie "Abbrechen") und zur Geräteliste zurück.</summary>
+        private void CloseView()
+        {
+            var f = _view;
+            if (f == null) return;
+            f.DialogResult = DialogResult.Cancel;
+            f.Close();
+            EndView(f);
+        }
+
+        private void EndView(Form f)
+        {
+            if (_view != f) return;
+            var done = _viewDone;
+            var result = f.DialogResult;
+            _view = null;
+            _viewDone = null;
+            if (_viewResize != null) { f.ClientSizeChanged -= _viewResize; _viewResize = null; }
+            _viewTitle.Tag = null;
+            _viewBody.Controls.Remove(f);
+            if (!f.IsDisposed) f.Dispose();
+            _viewHost.Visible = false;
+            _bar.Visible = true;
+            _searchBar.Visible = true;
+            _list.Visible = true;
+            foreach (var n in new[] { _navSchedules, _navHistory, _navRemote }) n.Selected = false;
+            _navDevices.Selected = true;
+            _nav.BringToFront();
+            FitRows();
+            if (done != null) done(result);
+        }
+
+        private void SetNavPinned(bool pinned)
+        {
+            _store.NavPinned = pinned;
+            try { _store.Save(); } catch { }
+            _navOpen = pinned;
+            ApplyNav();
+        }
+
+        private void ApplyNav()
+        {
+            if (_nav == null || _footer == null || _header == null) return;
+            bool pinned = _store.NavPinned;
+            bool open = pinned || _navOpen;
+            int full = S(230), compact = S(68);
+            if (_navSpacer.Width != (pinned ? full : compact))
+            {
+                _navSpacer.Width = pinned ? full : compact;
+                FitRows();
+            }
+            int top = _header.Bottom, h = Math.Max(0, _footer.Top - _header.Bottom);
+            _nav.SetBounds(0, top, open ? full : compact, h);
+            _nav.BringToFront();
+            _navPin.Visible = open;
+            _navPin.Glyph = pinned ? MenuHelper.Unpin : MenuHelper.Pin;
+            string pinText = pinned ? "Navigation lösen (einklappbar)" : "Navigation anpinnen";
+            _navPin.AccessibleName = pinText;
+            _tip.SetToolTip(_navPin, pinText);
+            _nav.Invalidate();
+            _navPin.Invalidate();
+            LayoutNav();
+        }
+
+        private void LayoutNav()
+        {
+            if (_navQuit == null) return;
+            int x = S(10), w = _nav.Width - S(20), h = _navDevices.Height;
+            int y = S(4);
+            _navMenu.SetBounds(x, y, S(48), h);
+            _navPin.SetBounds(_nav.Width - S(10) - S(36), y + (h - S(36)) / 2, S(36), S(36));
+            y += h + S(10);
+            foreach (var b in new[] { _navDevices, _navSchedules, _navHistory, _navRemote })
+            {
+                b.SetBounds(x, y, w, h);
+                y += h + S(4);
+            }
+            int bottom = _nav.Height - S(14);
+            _navQuit.Visible = KeepRunning;
+            if (KeepRunning)
+            {
+                _navQuit.SetBounds(x, bottom - h, w, h);
+                bottom -= h + S(4);
+            }
+            _navMore.SetBounds(x, bottom - h, w, h);
+        }
+
+        // ================================================================== Update-Prüfung (wie Fensterpositionen wiederherstellen)
+
+        private void StartUpdateTimer()
+        {
+            if (AfterUpdate)
+            {
+                // Neustart durch das Update-Skript: Ergebnis melden
+                string result = UpdateCheck.LastResult();
+                if (result != null && result.StartsWith("OK"))
+                {
+                    string v = result.Substring(2).Trim();
+                    SetMessage("Update auf Version " + v + " installiert.", Ui.Green);
+                    History.Add("Wake on LAN", "Update auf Version " + v + " installiert");
+                }
+                else if (result != null)
+                {
+                    string why = result.Replace("FEHLER", "").Trim();
+                    SetMessage("Update fehlgeschlagen: " + why + " – die bisherige Version läuft weiter.", Ui.Red);
+                    History.Add("Wake on LAN", "Update fehlgeschlagen: " + why);
+                }
+            }
+            _updateTimer.Tick += async (s, e) =>
+            {
+                _updateTimer.Interval = 6 * 3600000; // danach alle 6 Stunden nachsehen, ob die Prüfung fällig ist (läuft oft tagelang im Infobereich)
+                await CheckForUpdates(false);
+            };
+            _updateTimer.Start();
+        }
+
+        private UpdateHooks MakeUpdateHooks()
+        {
+            return new UpdateHooks
+            {
+                Status = UpdateState,
+                Auto = () => _store.UpdateCheck,
+                SetAuto = on =>
+                {
+                    _store.UpdateCheck = on;
+                    try { _store.Save(); } catch { }
+                },
+                CheckNow = () => CheckForUpdates(true),
+                CanInstall = () => _update != null && !string.IsNullOrEmpty(_update.ZipUrl) && UpdateCheck.InstallBlocker() == null,
+                Install = () => Post(() => { var t = InstallUpdate(); }), // erst nach dem Schließen des Info-Fensters
+                OpenPage = OpenReleasePage
+            };
+        }
+
+        /// <summary>Stand für das Info-Fenster: Symbol, Überschrift und zweite Zeile.</summary>
+        private UpdateStatus UpdateState()
+        {
+            string last = _store.UpdateLast == DateTime.MinValue ? "" : "Zuletzt geprüft " + _store.UpdateLast.ToString("dd.MM.yyyy");
+            if (_update != null) return new UpdateStatus(UpdateKind.Available, "Version " + _update.Version + " verfügbar", last);
+            if (_updateError != null) return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", _updateError);
+            if (_store.UpdateLast == DateTime.MinValue) return new UpdateStatus(UpdateKind.Unknown, "Noch nicht geprüft", "");
+            return new UpdateStatus(UpdateKind.Current, "Aktuell", last);
+        }
+
+        /// <summary>
+        /// Neueste Version auf GitHub abfragen. Automatisch (manual = false) höchstens alle 20 Stunden und still;
+        /// Fehler dann ohne Meldung (nächster Versuch nach einer Stunde).
+        /// </summary>
+        private async Task<UpdateStatus> CheckForUpdates(bool manual)
+        {
+            if (_demo || _updateRunning) return UpdateState();
+            if (!manual && (!_store.UpdateCheck || (DateTime.Now - _store.UpdateLast).TotalHours < 20)) return UpdateState();
+            _updateRunning = true;
+            try
+            {
+                var release = await Task.Run(() => UpdateCheck.Latest());
+                _updateError = null;
+                _store.UpdateLast = DateTime.Now;
+                try { _store.Save(); } catch { }
+                if (UpdateCheck.IsNewer(release.Version))
+                {
+                    bool fresh = _update == null || _update.Version != release.Version;
+                    _update = release;
+                    ShowUpdateBar(true);
+                    // im Infobereich: einmal je Version und Programmstart melden; Klick startet das Update
+                    if ((fresh || !_updateBalloonShown) && !manual && !Visible && _notifier != null)
+                    {
+                        _updateBalloon = true;
+                        _updateBalloonShown = true;
+                        _notifier.Show("Update verfügbar", "Wake on LAN " + release.Version + " ist verfügbar (installiert: " + Ui.Version + "). Klicken zum Aktualisieren.", ToolTipIcon.Info);
+                    }
+                }
+                else
+                {
+                    _update = null;
+                    ShowUpdateBar(false);
+                    // keine Meldung im Hauptfenster: der Stand steht im Info-Fenster, dort wurde geprüft
+                }
+            }
+            catch (Exception ex)
+            {
+                if (manual)
+                {
+                    _updateError = ex.Message; // erscheint im Info-Fenster
+                }
+            }
+            finally { _updateRunning = false; }
+            return UpdateState();
+        }
+
+        private void ShowUpdateBar(bool show)
+        {
+            show = show && _update != null;
+            if (show)
+            {
+                _updateBar.Text = "Neue Version " + _update.Version + " verfügbar – installiert ist " + Ui.Version + ".";
+                string blocker = UpdateCheck.InstallBlocker();
+                _updateBar.Install.Enabled = blocker == null && !string.IsNullOrEmpty(_update.ZipUrl);
+                _tip.SetToolTip(_updateBar.Install, blocker ?? (string.IsNullOrEmpty(_update.ZipUrl) ? "Im Release ist keine ZIP-Datei angehängt." :
+                    "ZIP herunterladen, Programm beenden, EXE und Liesmich ersetzen und neu starten.\r\nGeräteliste, Zeitpläne und Einstellungen bleiben erhalten."));
+                _tip.SetToolTip(_updateBar, string.IsNullOrEmpty(_update.Notes) ? "Die Änderungen stehen auf der Release-Seite." : "Änderungen:\r\n" + _update.Notes);
+            }
+            if (show == _updateHost.Visible) return;
+            _updateHost.Visible = show;
+            // Fenster um die Leiste vergrößern, soweit der Bildschirm reicht (globale Vorgabe)
+            if (show && WindowState == FormWindowState.Normal)
+            {
+                var wa = Screen.FromControl(this).WorkingArea;
+                int grow = Math.Min(_updateHost.Height, wa.Bottom - Bottom);
+                if (grow > 0) Height += grow;
+            }
+        }
+
+        private void OpenReleasePage()
+        {
+            Ui.Open(_update != null && !string.IsNullOrEmpty(_update.Url) ? _update.Url : UpdateCheck.ReleasesPage);
+        }
+
+        private async Task InstallUpdate()
+        {
+            if (_update == null || _installing) return;
+            var info = _update;
+            string text = "Wake on LAN wird beendet, auf Version " + info.Version + " aktualisiert und neu gestartet.\r\n" +
+                "Geräteliste, Zeitpläne und Einstellungen bleiben erhalten.";
+            if (_web != null) text += "\r\nDie Steuerung per Handy ist dabei kurz nicht erreichbar.";
+            if (MessageBox.Show(this, text + "\r\n\r\nJetzt aktualisieren?", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            _installing = true;
+            foreach (var b in new[] { _updateBar.Install, _updateBar.Page, _updateBar.Later }) b.Enabled = false;
+            string barText = _updateBar.Text;
+            try
+            {
+                _updateBar.Text = "Lade Version " + info.Version + " …";
+                await UpdateCheck.Install(info, percent => Post(() => _updateBar.Text = "Lade Version " + info.Version + " … " + percent + " %"));
+                History.Add("Wake on LAN", "Update auf Version " + info.Version + " wird installiert");
+                _exit = true; // wirklich beenden, nicht in den Infobereich – das Skript wartet darauf und startet neu
+                Close();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _updateBar.Text = barText;
+                _updateBar.Page.Enabled = true;
+                _updateBar.Later.Enabled = true;
+                _updateBar.Install.Enabled = UpdateCheck.InstallBlocker() == null;
+                _installing = false;
+            }
+        }
+
         protected override void OnKeyDown(KeyEventArgs e)
         {
+            if (_view != null) { base.OnKeyDown(e); return; } // Tastenkürzel der Geräteliste nur dort
             if (e.KeyCode == Keys.F5) { CheckAll(); e.Handled = true; }
             else if (e.KeyCode == Keys.N && e.Control) { AddDevice(); e.Handled = true; }
             else if (e.KeyCode == Keys.F && e.Control) { _search.Box.Focus(); _search.Box.SelectAll(); e.Handled = true; }
@@ -381,11 +848,23 @@ namespace WakeOnLan
 
         private void FitRows()
         {
+            // rechter Rand einheitlich (RightInset): ohne Bildlaufleiste hält die Liste deren Platz frei,
+            // mit Bildlaufleiste bleiben 28 zwischen Zeilen und Leiste – nichts springt, alles endet auf einer Linie
+            int right = _list.VerticalScroll.Visible ? S(28) : RightInset;
+            if (_list.Padding.Right != right) _list.Padding = new Padding(_list.Padding.Left, _list.Padding.Top, right, _list.Padding.Bottom);
             int w = _list.ClientSize.Width - _list.Padding.Horizontal;
             if (w <= 0) return;
+            int y = -_list.AutoScrollPosition.Y;
             _list.SuspendLayout();
             foreach (Control c in _list.Controls) c.Width = w - c.Margin.Horizontal;
-            _list.ResumeLayout();
+            _list.ResumeLayout(true);
+            // Wird die Liste schmaler (z. B. Navigation angepinnt), waren die Zeilen kurz zu breit: WinForms schiebt den
+            // Inhalt dann seitlich weg und lässt die waagrechte Bildlaufleiste stehen. Zurück an den linken Rand.
+            if (_list.AutoScrollPosition.X != 0 || _list.HorizontalScroll.Visible)
+            {
+                _list.AutoScrollPosition = new Point(0, y);
+                _list.PerformLayout();
+            }
         }
 
         // ================================================================== Status
@@ -1082,7 +1561,7 @@ namespace WakeOnLan
             {
                 string problem = Firewall.Problem(port);
                 if (problem == null) return;
-                Post(() => SetMessage("Steuerung per Handy: " + problem + " (siehe „…“ › „Steuerung per Handy“).", Ui.Yellow));
+                Post(() => SetMessage("Steuerung per Handy: " + problem + " (siehe „Steuerung per Handy“ in der Navigation).", Ui.Yellow));
             });
         }
 
@@ -1090,13 +1569,15 @@ namespace WakeOnLan
         {
             if (FocusOpenDialog()) return;
             if (!Visible) ShowFromTray();
-            using (var f = new RemoteForm(_store, false, _web != null, _webError))
-                if (f.ShowDialog(this) != DialogResult.OK) return;
-            try { _store.Save(); }
-            catch (Exception ex) { SetMessage("Speichern fehlgeschlagen: " + ex.Message, Ui.Red); }
-            StartRemote();
-            UpdateTray();
-            SetMessage(_store.Remote.Enabled ? "Steuerung per Handy: " + _store.Remote.Url(_store.Remote.Address) : "Steuerung per Handy ausgeschaltet.", Ui.Muted);
+            ShowView(_navRemote, new RemoteForm(_store, false, _web != null, _webError), result =>
+            {
+                if (result != DialogResult.OK) return;
+                try { _store.Save(); }
+                catch (Exception ex) { SetMessage("Speichern fehlgeschlagen: " + ex.Message, Ui.Red); }
+                StartRemote();
+                UpdateTray();
+                SetMessage(_store.Remote.Enabled ? "Steuerung per Handy: " + _store.Remote.Url(_store.Remote.Address) : "Steuerung per Handy ausgeschaltet.", Ui.Muted);
+            });
         }
 
         /// <summary>Symbol im Infobereich: dauerhaft, solange das Programm im Hintergrund weiterläuft oder versteckt ist.</summary>
@@ -1108,12 +1589,26 @@ namespace WakeOnLan
             string tip = Ui.AppName;
             if (_store.Remote.Enabled) tip += _web != null ? " – Handy: Port " + _web.Port : " – Handy: nicht gestartet";
             _notifier.SetPersistent(persistent, _trayMenu, tip);
+            LayoutNav(); // "Beenden" nur, solange das Programm im Infobereich weiterläuft
         }
 
         private ContextMenuStrip BuildTrayMenu()
         {
             var b = new ModernMenuBuilder(this);
             var menu = b.CreateMenu();
+            // oben fett "Update auf x installieren …", nur wenn eine neue Version gefunden wurde
+            var update = b.Item("Update installieren …", MenuHelper.Download, () => { ShowFromTray(); var t = InstallUpdate(); });
+            update.Font = new Font(menu.Font, FontStyle.Bold);
+            var updateSep = new ToolStripSeparator();
+            menu.Items.Add(update);
+            menu.Items.Add(updateSep);
+            menu.Opening += (s, e) =>
+            {
+                bool on = _update != null && !_installing;
+                update.Visible = on;
+                updateSep.Visible = on;
+                if (on) update.Text = "Update auf " + _update.Version + " installieren …";
+            };
             menu.Items.Add(b.Item("Öffnen", MenuHelper.Open, ShowFromTray));
             menu.Items.Add(b.Item("Alle wecken", MenuHelper.Power, () => { WakeAll(); }));
             menu.Items.Add(b.Item("Steuerung per Handy …", MenuHelper.Phone, OpenRemoteSettings));
@@ -1297,7 +1792,7 @@ namespace WakeOnLan
             return row != null ? row.RectangleToScreen(row.ClientRectangle) : Rectangle.Empty;
         }
 
-        private void ShowMainMenu(Control owner, Point location)
+        private void ShowMainMenu(Control owner, Point location, ToolStripDropDownDirection direction = ToolStripDropDownDirection.Default, Action closed = null)
         {
             var b = new ModernMenuBuilder(this);
             var menu = b.CreateMenu();
@@ -1325,14 +1820,6 @@ namespace WakeOnLan
             sort.Enabled = _store.Devices.Count > 1;
             menu.Items.Add(sort);
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(b.Item("Zeitpläne …", MenuHelper.Clock, () =>
-            {
-                using (var f = new ScheduleForm(_store)) f.ShowDialog(this);
-            }));
-            menu.Items.Add(b.Item("Verlauf …", MenuHelper.History, () =>
-            {
-                using (var f = new HistoryForm()) f.ShowDialog(this);
-            }));
             var notify = b.Item("Benachrichtigungen", MenuHelper.Bell, () =>
             {
                 _store.Notify = !_store.Notify;
@@ -1341,7 +1828,6 @@ namespace WakeOnLan
             });
             notify.Checked = _store.Notify;
             menu.Items.Add(notify);
-            menu.Items.Add(b.Item("Steuerung per Handy …", MenuHelper.Phone, OpenRemoteSettings));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(b.Item("Geräteliste exportieren …", MenuHelper.Save, ExportDevices));
             menu.Items.Add(b.Item("Geräteliste importieren …", MenuHelper.Open, ImportDevices));
@@ -1355,13 +1841,12 @@ namespace WakeOnLan
                 try { System.IO.Directory.CreateDirectory(_store.Folder); } catch { }
                 Ui.Open(_store.Folder);
             }));
-            if (KeepRunning)
+            menu.Closed += (s, e) =>
             {
-                menu.Items.Add(new ToolStripSeparator());
-                menu.Items.Add(b.Item("Beenden (auch im Infobereich)", MenuHelper.Close, ExitProgram));
-            }
-            menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
-            menu.Show(owner, location);
+                if (closed != null) closed();
+                BeginInvoke(new Action(menu.Dispose));
+            };
+            menu.Show(owner, location, direction);
         }
 
         /// <summary>Nach dem Verschieben des Programms: Zeitpläne mit altem Programmpfad still auf den neuen Pfad umstellen.</summary>
@@ -1551,7 +2036,7 @@ namespace WakeOnLan
     {
         private readonly float k;
         private readonly ToolTip _tip;
-        private readonly ModernButton _wake, _more;
+        private readonly ModernButton _wake;
         private readonly ToggleSwitch _all;
         private bool _hover;
         private string _tipText = "";
@@ -1584,13 +2069,10 @@ namespace WakeOnLan
             Height = (int)(44 * k); // eine Zeile, damit viele Geräte ohne Scrollen passen
             Margin = new Padding(0, 0, 0, (int)(4 * k));
 
-            _wake = new ModernButton("Wecken", MenuHelper.Power, false, k) { HeightUnits = 28, Margin = Padding.Empty };
+            // gleich breit wie "Gruppe wecken", damit die Knöpfe rechts eine ruhige Spalte bilden
+            _wake = new ModernButton("Wecken", MenuHelper.Power, false, k) { HeightUnits = 28, Margin = Padding.Empty, FixedWidth = GroupHeader.WakeWidth(k), AlignLeft = true };
             _wake.UpdateSize();
             _wake.Click += (s, e) => { if (WakeClicked != null) WakeClicked(this, EventArgs.Empty); };
-            _more = new ModernButton("", MenuHelper.More, false, k) { HeightUnits = 28, Margin = Padding.Empty };
-            _more.UpdateSize();
-            _more.Click += (s, e) => { if (MenuRequested != null) MenuRequested(this, new MouseEventArgs(MouseButtons.Right, 1, _more.Left, _more.Bottom, 0)); };
-            tip.SetToolTip(_more, "Bearbeiten, Verknüpfung, Löschen …");
             // Schalter "Alle wecken" direkt in der Zeile
             _all = new ToggleSwitch("Alle wecken", k);
             _all.SetChecked(device.InAll);
@@ -1598,9 +2080,15 @@ namespace WakeOnLan
             tip.SetToolTip(_all, "Gehört zu „Alle wecken“ (ein/aus)");
             Controls.Add(_all);
             Controls.Add(_wake);
-            Controls.Add(_more);
             foreach (Control c in Controls)
             {
+                // Rechtsklick auch über dem Schalter bzw. "Wecken": Menü des Geräts
+                c.MouseUp += (s, e) =>
+                {
+                    var src = (Control)s;
+                    if (e.Button == MouseButtons.Right && MenuRequested != null)
+                        MenuRequested(this, new MouseEventArgs(MouseButtons.Right, 1, src.Left + e.X, src.Top + e.Y, 0));
+                };
                 c.MouseEnter += (s, e) => SetHover(true);
                 c.MouseLeave += (s, e) => SetHover(ClientRectangle.Contains(PointToClient(Cursor.Position)));
                 // Ablegen auch über den Knöpfen: an die Zeile weiterreichen
@@ -1694,11 +2182,10 @@ namespace WakeOnLan
         {
             base.OnLayout(e);
             // Windows ordnet schon beim Setzen der Höhe im Konstruktor an - da gibt es die Knöpfe noch nicht
-            if (_wake == null || _more == null || _all == null) return;
+            if (_wake == null || _all == null) return;
             int pad = (int)(8 * k);
-            _more.Location = new Point(Width - pad - _more.Width, (Height - _more.Height) / 2);
-            _wake.Location = new Point(_more.Left - (int)(8 * k) - _wake.Width, (Height - _wake.Height) / 2);
-            // [Text …] [Alle wecken ◯] [Status] [Wecken] […]
+            _wake.Location = new Point(Width - pad - _wake.Width, (Height - _wake.Height) / 2);
+            // [Text …] [Alle wecken ◯] [Status] [Wecken] – weitere Funktionen per Rechtsklick
             _all.Location = new Point(_wake.Left - (int)(16 * k) - StatusWidth - (int)(12 * k) - _all.Width, (Height - _all.Height) / 2);
         }
 
@@ -1889,12 +2376,28 @@ namespace WakeOnLan
 
     /// <summary>
     /// Überschrift einer Gruppe: Pfeil zum Auf-/Zuklappen, Name, "3 Geräte · 2 online",
-    /// rechts "Gruppe wecken" und "…". "Ohne Gruppe" hat keine Knöpfe.
+    /// rechts "Gruppe wecken" (weitere Funktionen per Rechtsklick). "Ohne Gruppe" hat keine Knöpfe.
     /// </summary>
     internal sealed class GroupHeader : Panel
     {
+        private static int _wakeWidth;
+        private static float _wakeScale;
+
+        /// <summary>Gemeinsame Breite von "Gruppe wecken" und "Wecken" (Breite des längeren Texts).</summary>
+        public static int WakeWidth(float k)
+        {
+            if (_wakeWidth > 0 && _wakeScale == k) return _wakeWidth;
+            using (var b = new ModernButton("Gruppe wecken", MenuHelper.Power, false, k) { HeightUnits = 28 })
+            {
+                b.UpdateSize();
+                _wakeWidth = b.Width;
+            }
+            _wakeScale = k;
+            return _wakeWidth;
+        }
+
         private readonly float k;
-        private readonly ModernButton _wake, _more;
+        private readonly ModernButton _wake;
         private bool _hover;
         public readonly string Group;
         public readonly bool Collapsed;
@@ -1914,23 +2417,29 @@ namespace WakeOnLan
             Collapsed = collapsed;
             k = scale;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = Ui.Back;
+            // Überschrift als Karte in der Hover-Farbe der Zeilen (auch zugeklappt als Block erkennbar);
+            // BackColor = Kartenfarbe, weil "Gruppe wecken" seine Ecken in der Farbe des Elternelements zeichnet
+            BackColor = Ui.CardHover;
             Cursor = Cursors.Hand;
             if (Group.Length > 0)
             {
                 // Knöpfe vor dem Setzen der Höhe anlegen (OnLayout greift darauf zu)
-                _wake = new ModernButton("Gruppe wecken", MenuHelper.Power, false, k) { HeightUnits = 28, Margin = Padding.Empty };
+                _wake = new ModernButton("Gruppe wecken", MenuHelper.Power, false, k) { HeightUnits = 28, Margin = Padding.Empty, FixedWidth = WakeWidth(k), AlignLeft = true };
                 _wake.UpdateSize();
                 _wake.Click += (s, e) => { if (WakeClicked != null) WakeClicked(this, EventArgs.Empty); };
-                _more = new ModernButton("", MenuHelper.More, false, k) { HeightUnits = 28, Margin = Padding.Empty };
-                _more.UpdateSize();
-                _more.Click += (s, e) => { if (MenuRequested != null) MenuRequested(this, new MouseEventArgs(MouseButtons.Right, 1, _more.Left, _more.Bottom, 0)); };
-                tip.SetToolTip(_more, "Umbenennen, Verknüpfung, Gruppe auflösen …");
                 Controls.Add(_wake);
-                Controls.Add(_more);
                 foreach (Control c in Controls)
                 {
                     c.Cursor = Cursors.Hand;
+                    c.MouseEnter += (s, e) => SetHover(true);
+                    c.MouseLeave += (s, e) => SetHover(ClientRectangle.Contains(PointToClient(Cursor.Position)));
+                    // Rechtsklick auch über "Gruppe wecken": Menü der Gruppe
+                    c.MouseUp += (s, e) =>
+                    {
+                        var src = (Control)s;
+                        if (e.Button == MouseButtons.Right && MenuRequested != null)
+                            MenuRequested(this, new MouseEventArgs(MouseButtons.Right, 1, src.Left + e.X, src.Top + e.Y, 0));
+                    };
                     c.AllowDrop = true;
                     c.DragEnter += (s, e) => OnDragEnter(e);
                     c.DragOver += (s, e) => OnDragOver(e);
@@ -1940,21 +2449,28 @@ namespace WakeOnLan
             }
             AllowDrop = true;
             tip.SetToolTip(this, "Klick: " + (collapsed ? "aufklappen" : "zuklappen") + " · Rechtsklick: weitere Funktionen");
-            Height = (int)(38 * k);
-            Margin = new Padding(0, (int)(8 * k), 0, (int)(2 * k));
+            Height = (int)(44 * k); // so hoch wie eine Gerätezeile
+            Margin = new Padding(0, (int)(10 * k), 0, (int)(4 * k));
         }
 
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
-            if (_wake == null || _more == null) return;
+            if (_wake == null) return;
             int pad = (int)(8 * k);
-            _more.Location = new Point(Width - pad - _more.Width, (Height - _more.Height) / 2);
-            _wake.Location = new Point(_more.Left - (int)(8 * k) - _wake.Width, (Height - _wake.Height) / 2);
+            _wake.Location = new Point(Width - pad - _wake.Width, (Height - _wake.Height) / 2);
         }
 
-        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
-        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+        private void SetHover(bool h)
+        {
+            if (h == _hover) return;
+            _hover = h;
+            BackColor = h ? Ui.Hover : Ui.CardHover;
+            Invalidate(true);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { SetHover(true); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { SetHover(ClientRectangle.Contains(PointToClient(Cursor.Position))); base.OnMouseLeave(e); }
 
         // ---------- Gruppe ziehen (Reihenfolge) ----------
         public const string DragFormat = "WakeOnLan.Group";
@@ -2000,7 +2516,13 @@ namespace WakeOnLan
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.Clear(BackColor);
+            g.Clear(Parent != null ? Parent.BackColor : Ui.Back);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var cp = Ui.Rounded(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 6 * k))
+            {
+                using (var cb = new SolidBrush(BackColor)) g.FillPath(cb, cp);
+                using (var pen = new Pen(Ui.Border)) g.DrawPath(pen, cp);
+            }
             if (DropHighlight)
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;

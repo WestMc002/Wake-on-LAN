@@ -41,6 +41,13 @@ namespace WakeOnLan
                 return Demo.RunScreenshots(outDir) ? 0 : 1;
             }
 
+            // Neustart durch das Update-Skript: wie ein normaler Start, das Fenster meldet das Ergebnis
+            if (args.Length == 1 && string.Equals(args[0], "--nach-update", StringComparison.OrdinalIgnoreCase))
+            {
+                MainForm.AfterUpdate = true;
+                args = new string[0];
+            }
+
             var store = new DeviceStore();
 
             // Autostart: nur im Infobereich starten (Steuerung per Handy)
@@ -52,6 +59,12 @@ namespace WakeOnLan
             // Nur ein Fenster: läuft das Programm schon (auch versteckt im Infobereich), wird es nach vorne geholt
             bool first;
             _instance = new Mutex(true, "Local\\WakeOnLan.Fenster", out first);
+            if (!first && MainForm.AfterUpdate)
+            {
+                // Neustart nach dem Update: kurz warten, bis die alte Instanz ganz beendet ist (Einzelinstanz-Mutex)
+                try { first = _instance.WaitOne(15000); }
+                catch (AbandonedMutexException) { first = true; }
+            }
             try { ShowSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\WakeOnLan.Zeigen"); } catch { }
             if (!first)
             {
@@ -143,7 +156,7 @@ namespace WakeOnLan
             "  \"Wake on LAN.exe\" /hintergrund     nur im Infobereich starten (Steuerung per Handy)\r\n\r\n" +
             "Beim Wecken über die Kommandozeile öffnet sich kein Fenster. Eine Windows-\r\n" +
             "Benachrichtigung meldet, wenn die Geräte online sind (abschaltbar im Fenster\r\n" +
-            "unter „…“). Exit-Code: 0 = in Ordnung, 1 = Fehler.";
+            "unter „Einstellungen“). Exit-Code: 0 = in Ordnung, 1 = Fehler.";
 
         public static int Run(DeviceStore store, string[] args)
         {

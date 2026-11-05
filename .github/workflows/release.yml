@@ -69,7 +69,7 @@ jobs:
               '## Installation',
               '',
               "1. ``Wake-on-LAN-$ver.zip`` herunterladen und in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Wake on LAN``.",
-              '2. `Wake on LAN.exe` starten und Geräte anlegen – oder über `…` › Aus alten Skripten übernehmen.',
+              '2. `Wake on LAN.exe` starten und Geräte anlegen – oder über Einstellungen › Aus alten Skripten übernehmen.',
               '3. Das Programm an die Taskleiste anheften: Die Sprungliste (Rechtsklick) zeigt Alle wecken, Gruppen und Geräte.',
               '',
               'Voraussetzung: Windows 10 (ab Version 1803) oder 11 mit .NET Framework 4.7.2 oder neuer. Für IPMI wird `ipmitool` gebraucht. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.'

@@ -77,7 +77,7 @@ namespace WakeOnLan
                         // Hauptfenster (Titelbild) und Kontextmenü eines Geräts
                         using (var main = new MainForm(store, true))
                         {
-                            main.Size = new Size(S(main, 1040), S(main, 800));
+                            main.Size = new Size(S(main, 1260), S(main, 800));
                             main.StartPosition = FormStartPosition.Manual;
                             main.Location = new Point(area.Left + (area.Width - main.Width) / 2, area.Top + Math.Max(0, (area.Height - main.Height) / 2));
                             main.ApplyDemoStatus();
@@ -167,7 +167,8 @@ namespace WakeOnLan
         /// <summary>Nimmt den Bereich vor schwarzem und vor weißem Hintergrund auf und berechnet daraus die Durchsichtigkeit.</summary>
         private static Bitmap Capture(Backdrop backdrop, IntPtr target, Rectangle bounds, int margin)
         {
-            var r = Rectangle.Inflate(bounds, margin, margin);
+            // nur der sichtbare Bildschirm: liegt das Fenster am Rand, wäre der Bereich daneben sonst schwarz
+            var r = Rectangle.Intersect(Rectangle.Inflate(bounds, margin, margin), Screen.FromHandle(target).Bounds);
             backdrop.Cover(r, Color.Black, target);
             Pump(300);
             using (var onBlack = Grab(r))

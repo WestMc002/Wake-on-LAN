@@ -39,6 +39,7 @@ namespace WakeOnLan
             Add(Color.FromArgb(246, 246, 246), Color.FromArgb(52, 52, 52));    // Knopf: Maus darüber
             Add(Color.FromArgb(236, 236, 236), Color.FromArgb(62, 62, 62));    // Knopf: gedrückt
             Add(Color.FromArgb(249, 249, 249), Color.FromArgb(50, 50, 50));    // Karte: Maus darüber
+            Add(Color.FromArgb(234, 234, 234), Color.FromArgb(45, 45, 45));    // Navigation: ausgewählt
             Add(Color.FromArgb(29, 78, 216), Color.FromArgb(147, 180, 255));   // Versions-Plakette
             Add(SystemColors.Control, Color.FromArgb(32, 32, 32));
             Add(SystemColors.Window, Color.FromArgb(43, 43, 43));

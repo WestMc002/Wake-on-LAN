@@ -57,6 +57,14 @@ feste Zuweisung (DHCP-Reservierung) im Router.
 
 BEDIENUNG
 ---------
+  Navigation                 links: Geräte, Zeitpläne, Verlauf, Steuerung per
+                             Handy, unten Einstellungen (und Beenden,
+                             solange das Programm im Infobereich weiterläuft).
+                             Mit der Stecknadel
+                             angepinnt bleibt sie offen; gelöst zeigt sie nur
+                             die Symbole, ☰ klappt sie aus, nach der Auswahl
+                             bzw. beim Verlassen mit der Maus klappt sie wieder
+                             ein (wie bei Sync Pilot)
   Gerät hinzufügen           Knopf oben rechts: "Gerät eingeben …" (Strg+N)
                              oder "Im Netzwerk suchen …"
   Im Netzwerk suchen         findet eingeschaltete Geräte im eigenen Netz per
@@ -71,14 +79,15 @@ BEDIENUNG
                              oder Von/Bis selbst eintragen (bis 4096 Adressen)
                              und auf "Suchen" klicken (Enter)
   Bearbeiten                 Doppelklick auf das Gerät
-  Weitere Funktionen         Rechtsklick oder "…" am Gerät: Wecken, Bearbeiten,
+  Menü eines Geräts          Rechtsklick auf das Gerät: Wecken, Bearbeiten,
                              Duplizieren, Nach oben/unten, Verknüpfung auf dem
                              Desktop, Löschen
   Alle wecken                alle Geräte, deren Schalter "Alle wecken" in der
                              Zeile eingeschaltet ist (Anzahl steht auf dem Knopf)
-  Gruppen                    "…" oben > Neue Gruppe, Gruppe beim Bearbeiten
-                             eintragen, per Rechtsklick > In Gruppe oder Gerät
-                             per Maus auf die Gruppen-Überschrift ziehen. Je Gruppe eine Überschrift mit "Gruppe
+  Gruppen                    Einstellungen > Neue Gruppe, Gruppe beim
+                             Bearbeiten eintragen, per Rechtsklick > In Gruppe
+                             oder Gerät per Maus auf die Gruppen-Überschrift
+                             ziehen. Je Gruppe eine Überschrift mit "Gruppe
                              wecken"; Klick auf die Überschrift klappt sie zu/auf,
                              Rechtsklick: Nach oben/unten, Geräte sortieren
                              (Name, IP-Adresse), Umbenennen,
@@ -105,22 +114,46 @@ BEDIENUNG
                              Taskleiste: Alle wecken, Gruppen und Geräte direkt
   Benachrichtigungen         Windows-Meldung, wenn das geweckte Gerät online ist
                              (bzw. nach 3 Minuten nicht) – im Fenster nur, wenn
-                             es nicht im Vordergrund ist; abschaltbar unter "…"
-  Zeitpläne                  "…" > Zeitpläne: z. B. Gruppe Server Mo–Fr 07:00
+                             es nicht im Vordergrund ist; abschaltbar unter
+                             "Einstellungen"
+  Zeitpläne                  Navigation > Zeitpläne: z. B. Gruppe Server Mo–Fr 07:00
                              wecken; liegt als "Wake on LAN - …" in der Windows-
                              Aufgabenplanung und läuft, solange du angemeldet bist
-  Verlauf                    "…" > Verlauf: wann was geweckt, online, nicht
+  Verlauf                    Navigation > Verlauf: wann was geweckt, online, nicht
                              erreicht oder heruntergefahren wurde
-  Export/Import              "…" > Geräteliste exportieren/importieren (XML,
-                             ohne IPMI-Kennwörter – die sind nur unter deinem
-                             Windows-Benutzer lesbar und müssen neu rein)
-  "…" oben rechts            Aus alten Skripten übernehmen, Sortieren (Name,
-                             IP-Adresse, "Alle wecken" zuerst), Verknüpfung
-                             "Alle wecken", Ordner der Geräteliste öffnen
+  Export/Import              Einstellungen > Geräteliste exportieren/
+                             importieren (XML, ohne IPMI-Kennwörter – die sind
+                             nur unter deinem Windows-Benutzer lesbar und
+                             müssen neu rein)
+  Einstellungen              in der Navigation unten (Zahnrad; auch Rechtsklick
+                             in die freie Fläche der Liste): Gerät hinzufügen,
+                             Im Netzwerk suchen, Neue Gruppe, Sortieren (Name,
+                             IP-Adresse, "Alle wecken" zuerst),
+                             Benachrichtigungen, Export/Import, Aus alten
+                             Skripten übernehmen, Verknüpfung "Alle wecken",
+                             Ordner der Geräteliste öffnen
+  Updates                    sucht höchstens einmal täglich auf GitHub nach
+                             einer neuen Version (15 s nach dem Start, im
+                             Infobereich stündlich nachgesehen). Gibt es eine,
+                             erscheint oben eine Hinweisleiste (im Infobereich
+                             zusätzlich eine Meldung): "Jetzt aktualisieren"
+                             lädt das ZIP, beendet das Programm, ersetzt EXE
+                             und Liesmich und startet neu (Geräteliste,
+                             Zeitpläne und Einstellungen bleiben erhalten;
+                             Programmordner ohne Schreibrechte: Abfrage nach
+                             Administratorrechten). "Release-Seite" öffnet
+                             GitHub, "Später" blendet den Hinweis aus.
+                             Info-Fenster (Klick auf die Version): Stand der
+                             letzten Prüfung, "Jetzt prüfen" (bei neuer Version
+                             "Aktualisieren") und "Automatisch prüfen".
+                             Abgefragt wird nur die öffentliche
+                             Release-Liste (api.github.com), ohne Anmeldung und
+                             ohne persönliche Daten. Im Projektordner (mit
+                             Erstellen.bat) wird nicht automatisch ersetzt
 
 STEUERUNG PER HANDY
 -------------------
-"…" > Steuerung per Handy: Wake on LAN zeigt die Geräteliste zusätzlich als
+Navigation > Steuerung per Handy: Wake on LAN zeigt die Geräteliste zusätzlich als
 Webseite an. Auf dem Handy (oder Tablet, anderen PC) den QR-Code scannen
 und wecken – eine eigene App ist nicht nötig. Die Seite
 zeigt Gruppen, Status (grün/rot, wird alle 3 Sekunden aktualisiert), "Alle wecken",
@@ -156,7 +189,7 @@ Einrichten:
   "Alle Handys abmelden" (bzw. ein neues Passwort) meldet alle Handys ab.
 
 Läuft im Hintergrund: Mit "Beim Schließen im Infobereich weiterlaufen"
-schließt "Schließen" bzw. das X nur das Fenster; das Programm bleibt mit
+schließt das X nur das Fenster; das Programm bleibt mit
 Symbol im Infobereich aktiv (Rechtsklick: Öffnen, Alle wecken, Steuerung per
 Handy, Beenden). "Mit Windows starten" startet es bei der Anmeldung gleich im
 Infobereich (Eintrag "Wake on LAN" unter Autostart, Aufruf mit /hintergrund).
@@ -235,6 +268,39 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.47.2026.1105 Einstellungsseiten mit "Speichern" und "Abbrechen" (Änderungen
+                 gelten erst beim Speichern); Steuerung per Handy: "Im
+                 Hintergrund" rechts unter "Auf dem Handy öffnen", Hinweise
+                 und Beschreibungen vollständig, als eigenes Fenster passend
+                 zum Bildschirm; Versions-Plakette mit größerem Abstand zum
+                 Namen; im Infobereich alle 6 Stunden nach Updates sehen,
+                 Klick auf die Meldung startet das Update, oben im Menü
+                 "Update auf x installieren …"; nach dem Update sicherer
+                 Neustart
+  1.32.2026.1105 Info-Fenster: Updates mit Symbol für den Stand, letzter
+                 Prüfung in zweiter Zeile und Knopf "Jetzt prüfen" bzw.
+                 "Aktualisieren"; Schalter "Automatisch prüfen" bündig;
+                 Symbole der Navigation 14 pt, Stecknadel 12 pt (wie Sync
+                 Pilot); Versions-Plakette mittig zum Namen; Knopf
+                 "Schließen" entfällt (X bzw. Beenden in der Navigation);
+                 Handy-Seite: Version oben (Tippen zeigt Info mit Logo und
+                 Copyright, Fußzeile entfällt), Gruppen als Karte, "…"
+                 links neben "Wecken"; Zeitpläne, Verlauf und Steuerung per
+                 Handy öffnen sich im selben Fenster statt als eigenes
+                 Fenster; Steuerung per Handy aufgebaut wie bei Sync Pilot
+                 (Karten Steuerung, Im Hintergrund, HTTPS, Internet links,
+                 "Auf dem Handy öffnen" rechts, schmal untereinander)
+  1.26.2026.1105 Update-Prüfung über GitHub wie bei Fensterpositionen:
+                 höchstens einmal täglich, Hinweisleiste mit "Jetzt
+                 aktualisieren" (Selbst-Update mit Neustart), "Release-
+                 Seite" und "Später"; Stand, "Jetzt prüfen" und automatische
+                 Prüfung im Info-Fenster
+  1.23.2026.1105 Navigation links wie bei Sync Pilot: ein-/ausklappbar und
+                 anpinnbar (Geräte, Zeitpläne, Verlauf, Steuerung per Handy,
+                 Einstellungen, Beenden – Symbole wie bei Sync Pilot) statt
+                 des Knopfs "…" oben rechts;
+                 Knöpfe "…" an Geräten und Gruppen entfernt (Menü per
+                 Rechtsklick, auch über den Knöpfen der Zeile)
   1.21.2026.1104 Netzwerksuche startet erst mit "Suchen"; Auswahlfeld "Netz"
                  und Knopf "Suchen" mit fester Breite
   1.20.2026.1104 Netzwerksuche: Netz auswählen (Heimnetz zuerst) oder Bereich

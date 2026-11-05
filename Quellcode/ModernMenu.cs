@@ -331,6 +331,15 @@ namespace WakeOnLan
         public const char Close = '\uE8BB';
         public const char Lock = '\uE72E';
         public const char Shield = '\uEA18';
+        public const char Devices = '\uE772';
+        public const char Settings = '\uE713';
+        public const char Download = '\uE896';
+        public const char Completed = '\uE930';
+        public const char Warning = '\uE7BA';
+        public const char Sync = '\uE895';
+        public const char Menu = '\uE700';
+        public const char Pin = '\uE718';
+        public const char Unpin = '\uE77A';
 
         internal static string IconFont()
         {

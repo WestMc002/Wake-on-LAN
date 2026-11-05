@@ -18,7 +18,7 @@ namespace WakeOnLan
     /// <summary>
     /// Dialog in zwei Spalten: links Grundeinstellungen und HTTPS, rechts QR-Code mit Adresse, Firewall und Kurzanleitung.
     /// </summary>
-    internal sealed class RemoteForm : FixedForm
+    internal sealed class RemoteForm : FixedForm, IViewLayout
     {
         private readonly float k;
         private readonly DeviceStore _store;
@@ -68,32 +68,25 @@ namespace WakeOnLan
             Font = new Font("Segoe UI", 9.5f);
             using (var g = CreateGraphics()) k = g.DpiX / 96f;
 
-            int margin = S(24), gap = S(16), colW = S(400), col2W = S(340);
-            // drei Spalten nebeneinander (Grundeinstellungen | HTTPS | Handy), damit der Dialog auch auf 1080p-Bildschirmen passt
-            int x2 = margin + colW + gap, x3 = x2 + colW + gap;
+            // Aufbau wie Sync Pilot (Einstellungen › Steuerung per Handy): links untereinander die Karten
+            // Steuerung, Im Hintergrund, HTTPS, Internet; rechts "Auf dem Handy öffnen". Positionen setzt Arrange().
 
-            // ---------- Links: Grundeinstellungen ----------
-            var basic = NewCard("Steuerung per Handy", margin, margin, colW);
-            int y = S(44);
-            _enabled = Check(basic, "Steuerung per Handy einschalten", _r.Enabled, ref y);
-            y = Hint(basic, "Wake on LAN zeigt die Geräteliste als Webseite an – im Handy-Browser öffnen, Passwort eingeben, wecken.", y);
-            int portW = S(96), addrX = S(20) + portW + S(12);
-            int yRow = y;
-            _port = Field(basic, "Port", _r.Port.ToString(), ref y, portW);
-            y = yRow;
-            _address = Field(basic, "Adresse für das Handy", _r.Address.Length > 0 ? _r.Address : DefaultAddress(), ref y, colW - S(20) - addrX, addrX);
-            y = Hint(basic, "Rechnername, IP-Adresse oder Domain/DynDNS-Name (wie im Zertifikat). Daraus entstehen Link und QR-Code.", y);
-            basic.Controls.Add(new Label { Text = "Passwort", ForeColor = Ui.Text, BackColor = Ui.Card, AutoSize = false, Location = new Point(S(20), y), Size = new Size(colW - S(40), S(22)) });
-            y += S(24);
-            _setPin = new ModernButton(_r.HasPin ? "Ändern …" : "Festlegen …", MenuHelper.Lock, false, k) { HeightUnits = 32 };
+            // ---------- Steuerung per Handy ----------
+            _cBasic = NewCard("Steuerung per Handy");
+            _enabled = Row(_cBasic, 0, "Webseite für Handy und Tablet",
+                "Geräte ansehen, wecken und herunterfahren – im Browser des Handys, ohne App.", _r.Enabled);
+            _lPort = FieldLabel(_cBasic, "Port");
+            _port = Box(_cBasic, _r.Port.ToString());
+            _lAddress = FieldLabel(_cBasic, "Adresse für das Handy");
+            _address = Box(_cBasic, _r.Address.Length > 0 ? _r.Address : DefaultAddress());
+            _addressHint = HintLabel(_cBasic, "Rechnername, IP-Adresse oder Domain/DynDNS-Name (wie im Zertifikat). Daraus entstehen Link und QR-Code.");
+            _lPass = FieldLabel(_cBasic, "Passwort");
+            _setPin = new ModernButton(_r.HasPin ? "Ändern …" : "Festlegen …", MenuHelper.Lock, false, k) { HeightUnits = 32, Margin = Padding.Empty };
             _setPin.UpdateSize();
-            _setPin.Location = new Point(S(20), y);
             _setPin.Click += (s, e) => ChoosePin();
-            basic.Controls.Add(_setPin);
-            _logoutAll = new ModernButton("Alle Handys abmelden", '\0', false, k) { HeightUnits = 32 };
+            _cBasic.Controls.Add(_setPin);
+            _logoutAll = new ModernButton("Alle Handys abmelden", '\0', false, k) { HeightUnits = 32, Margin = Padding.Empty };
             _logoutAll.UpdateSize();
-            _logoutAll.Location = new Point(_setPin.Right + S(8), y);
-            y += _setPin.Height + S(12);
             _logoutAll.Enabled = _r.HasPin;
             _logoutAll.Click += (s, e) =>
             {
@@ -102,120 +95,98 @@ namespace WakeOnLan
                 _pinHint.Text = "Alle Handys werden beim Speichern abgemeldet und müssen sich neu anmelden.";
                 UpdateUrl();
             };
-            basic.Controls.Add(_logoutAll);
-            _pinHint = new Label { ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, Font = new Font("Segoe UI", 8.5f), Location = new Point(S(20), y - S(4)), Size = new Size(colW - S(40), S(34)) };
-            basic.Controls.Add(_pinHint);
-            y += S(34);
-            _background = Check(basic, "Beim Schließen im Infobereich weiterlaufen", _r.Background, ref y);
-            _autostart = Check(basic, "Mit Windows starten (nur im Infobereich)", demo || Autostart.Enabled, ref y);
-            basic.Height = y + S(8);
+            _cBasic.Controls.Add(_logoutAll);
+            _pinHint = HintLabel(_cBasic, "");
+
+            // ---------- Im Hintergrund ----------
+            _cBack = NewCard("Im Hintergrund");
+            _background = Row(_cBack, 0, "Beim Schließen im Infobereich weiterlaufen",
+                "Das X schließt nur das Fenster – das Programm bleibt mit Symbol im Infobereich, die Handy-Seite bleibt erreichbar.", _r.Background);
+            _autostart = Row(_cBack, 1, "Mit Windows starten",
+                "Bei der Anmeldung gleich im Infobereich starten (nur zusammen mit „Im Infobereich weiterlaufen“).", demo || Autostart.Enabled);
             _remoteFields.AddRange(new Control[] { _port, _address, _setPin, _logoutAll, _background, _autostart });
 
-            // ---------- Links: HTTPS ----------
-            var tls = NewCard("Verschlüsselung (HTTPS)", x2, margin, colW);
-            y = S(44);
-            _https = Check(tls, "Verschlüsselt über HTTPS", _r.Https, ref y);
-            _srcFile = new ModernPill("Zertifikatsdatei", k) { Location = new Point(S(20), y) };
-            _srcStore = new ModernPill("Windows-Zertifikatspeicher", k) { Location = new Point(S(20) + _srcFile.Width + S(8), y) };
+            // ---------- Verschlüsselung (HTTPS) ----------
+            _cTls = NewCard("Verschlüsselung (HTTPS)");
+            _https = Row(_cTls, 0, "Verschlüsselt über HTTPS",
+                "Mit eigenem Zertifikat, z. B. von Let's Encrypt. Nötig für den Zugriff aus dem Internet.", _r.Https);
+            _srcFile = new ModernPill("Zertifikatsdatei", k);
+            _srcStore = new ModernPill("Windows-Zertifikatspeicher", k);
             _srcFile.Checked = !_r.CertFromStore;
             _srcStore.Checked = _r.CertFromStore;
             _srcFile.Click += (s, e) => SetSource(false);
             _srcStore.Click += (s, e) => SetSource(true);
-            tls.Controls.Add(_srcFile);
-            tls.Controls.Add(_srcStore);
-            y += _srcFile.Height + S(14);
-            int sourceTop = y;
-            int browseW = S(40);
-            _cert = Field(tls, "Zertifikat (.crt, .pem, .cer, .pfx, .p12)", _r.CertFile, ref y, colW - S(40) - browseW - S(8), 0, true);
-            var lCert = tls.Controls[tls.Controls.Count - 2];
-            var browseCert = Browse(tls, _cert, browseW, colW, () => ChooseFile(_cert, "Zertifikat auswählen", "Zertifikate (*.crt;*.pem;*.cer;*.pfx;*.p12)|*.crt;*.pem;*.cer;*.pfx;*.p12|Alle Dateien (*.*)|*.*", true));
-            _key = Field(tls, "Privater Schlüssel (.key, .pem) – nicht bei .pfx/.p12", _r.KeyFile, ref y, colW - S(40) - browseW - S(8), 0, true);
-            var lKey = tls.Controls[tls.Controls.Count - 2];
-            var browseKey = Browse(tls, _key, browseW, colW, () => ChooseFile(_key, "Privaten Schlüssel auswählen", "Schlüssel (*.key;*.pem)|*.key;*.pem|Alle Dateien (*.*)|*.*", false));
-            _certPassword = Field(tls, "Kennwort (nur .pfx/.p12)", "", ref y, S(180));
-            var lCertPassword = tls.Controls[tls.Controls.Count - 2];
+            _cTls.Controls.Add(_srcFile);
+            _cTls.Controls.Add(_srcStore);
+            _lCert = FieldLabel(_cTls, "Zertifikat (.crt, .pem, .cer, .pfx, .p12)");
+            _cert = Box(_cTls, _r.CertFile);
+            _browseCert = BrowseButton(_cTls, () => ChooseFile(_cert, "Zertifikat auswählen", "Zertifikate (*.crt;*.pem;*.cer;*.pfx;*.p12)|*.crt;*.pem;*.cer;*.pfx;*.p12|Alle Dateien (*.*)|*.*", true));
+            _lKey = FieldLabel(_cTls, "Privater Schlüssel (.key, .pem) – nicht bei .pfx/.p12");
+            _key = Box(_cTls, _r.KeyFile);
+            _browseKey = BrowseButton(_cTls, () => ChooseFile(_key, "Privaten Schlüssel auswählen", "Schlüssel (*.key;*.pem)|*.key;*.pem|Alle Dateien (*.*)|*.*", false));
+            _lCertPassword = FieldLabel(_cTls, "Kennwort (nur .pfx/.p12)");
+            _certPassword = Box(_cTls, "");
             _certPassword.Password = true;
-            // Windows-Zertifikatspeicher: Domain an derselben Stelle wie die Dateifelder
-            int yStore = sourceTop;
-            _certName = Field(tls, "Domain im Zertifikat (z. B. wol.meinedomain.de)", _r.CertName, ref yStore);
-            var lCertName = tls.Controls[tls.Controls.Count - 2];
-            Hint(tls, "Z. B. von win-acme abgelegt und automatisch verlängert – Wake on LAN nimmt immer das neueste gültige Zertifikat.", yStore);
-            var storeHint = tls.Controls[tls.Controls.Count - 1];
-            _fileFields.AddRange(new Control[] { lCert, _cert, browseCert, lKey, _key, browseKey, lCertPassword, _certPassword });
-            _storeFields.AddRange(new Control[] { lCertName, _certName, storeHint });
-            _checkCert = new ModernButton("Zertifikat prüfen", MenuHelper.Shield, false, k) { HeightUnits = 32 };
+            _lCertName = FieldLabel(_cTls, "Domain im Zertifikat (z. B. wol.meinedomain.de)");
+            _certName = Box(_cTls, _r.CertName);
+            _storeHint = HintLabel(_cTls, "Z. B. von win-acme abgelegt und automatisch verlängert – Wake on LAN nimmt immer das neueste gültige Zertifikat.");
+            _fileFields.AddRange(new Control[] { _lCert, _cert, _browseCert, _lKey, _key, _browseKey, _lCertPassword, _certPassword });
+            _storeFields.AddRange(new Control[] { _lCertName, _certName, _storeHint });
+            _checkCert = new ModernButton("Prüfen und übernehmen", MenuHelper.Shield, false, k) { HeightUnits = 32, Margin = Padding.Empty };
             _checkCert.UpdateSize();
-            _checkCert.Location = new Point(S(20) + S(180) + S(12), _certPassword.Top);
             _checkCert.Click += (s, e) => CheckCertificate();
-            tls.Controls.Add(_checkCert);
-            _certStatus = new Label { ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, Font = new Font("Segoe UI", 8.5f), Location = new Point(S(20), y - S(4)), Size = new Size(colW - S(40), S(34)) };
-            tls.Controls.Add(_certStatus);
-            y += S(34);
-            _internet = Check(tls, "Auch aus dem Internet erreichbar", _r.Internet, ref y);
-            y = Hint(tls, "Im Router den TCP-Port auf diesen PC weiterleiten. Nur mit HTTPS; Passwort mindestens 12 Zeichen. Nach 5 falschen Passwörtern ist eine Adresse 10 Minuten gesperrt, nach 15 in einer Stunde die Anmeldung von außen 1 Stunde.", y);
-            tls.Height = y + S(8);
-            _httpsFields.AddRange(new Control[] { _srcFile, _srcStore, _cert, browseCert, _key, browseKey, _certPassword, _certName, _checkCert, _certStatus });
+            _cTls.Controls.Add(_checkCert);
+            _certStatus = HintLabel(_cTls, "");
+            _httpsFields.AddRange(new Control[] { _srcFile, _srcStore, _cert, _browseCert, _key, _browseKey, _certPassword, _certName, _checkCert, _certStatus });
 
-            // ---------- Rechts: QR-Code und Hinweise ----------
-            var phone = NewCard("Auf dem Handy öffnen", x3, margin, col2W);
-            y = S(44);
-            int qrSize = S(200);
-            _qr = new QrBox { Location = new Point((col2W - qrSize) / 2, y), Size = new Size(qrSize, qrSize) };
-            phone.Controls.Add(_qr);
-            y += qrSize + S(10);
-            _url = new Label { ForeColor = Ui.AccentText, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI Semibold", 9.5f), Location = new Point(S(20), y), Size = new Size(col2W - S(40), S(22)) };
-            phone.Controls.Add(_url);
-            y += S(26);
-            _copy = new ModernButton("Link kopieren", MenuHelper.Copy, false, k) { HeightUnits = 32 };
+            // ---------- Zugriff aus dem Internet ----------
+            _cNet = NewCard("Zugriff aus dem Internet");
+            _internet = Row(_cNet, 0, "Auch aus dem Internet erreichbar",
+                "Portweiterleitung im Router auf diesen PC. Nur mit HTTPS und einem Passwort ab 12 Zeichen.", _r.Internet);
+            _netHint = HintLabel(_cNet, "Schutz: Nach 5 falschen Passwörtern ist eine Adresse 10 Minuten gesperrt, nach 15 in einer Stunde die Anmeldung " +
+                "von außen 1 Stunde – im Heimnetz geht es weiter. Aus: Die Seite nimmt nur Verbindungen aus dem Heimnetz und per VPN an.");
+
+            // ---------- Auf dem Handy öffnen ----------
+            _cOpen = NewCard("Auf dem Handy öffnen");
+            _qr = new QrBox();
+            _cOpen.Controls.Add(_qr);
+            _url = new Label { ForeColor = Ui.AccentText, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI Semibold", 9.5f), UseMnemonic = false };
+            _cOpen.Controls.Add(_url);
+            _copy = new ModernButton("Link kopieren", MenuHelper.Copy, false, k) { HeightUnits = 32, Margin = Padding.Empty };
             _copy.UpdateSize();
-            _copy.Location = new Point((col2W - _copy.Width) / 2, y);
             _copy.Click += (s, e) => { try { Clipboard.SetText(CurrentUrl()); SetCopyText("Kopiert"); } catch { } };
-            phone.Controls.Add(_copy);
-            y += _copy.Height + S(14);
-            y = Hint(phone, "1. QR-Code mit der Handy-Kamera scannen (Handy im WLAN, per VPN oder – wenn eingeschaltet – aus dem Internet).\r\n" +
-                "2. Das Handy ist sofort angemeldet, ohne Passwort, und bleibt es. Der QR-Code gilt 10 Minuten und nur einmal und wird von selbst erneuert. " +
-                "Ohne Kamera: Link öffnen und Passwort eingeben.\r\n" +
-                "3. Im Browsermenü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“: Wake on LAN öffnet sich dann wie eine App" +
-                " (ohne Browserleiste nur mit HTTPS).", y);
-            phone.Controls.Add(new Label { Text = "Windows-Firewall", ForeColor = Ui.Text, BackColor = Ui.Card, AutoSize = false, Font = new Font("Segoe UI Semibold", 9.5f), Location = new Point(S(20), y), Size = new Size(col2W - S(40), S(22)) });
-            y += S(24);
-            _firewall = new Label { ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, Font = new Font("Segoe UI", 8.5f), Location = new Point(S(20), y), Size = new Size(col2W - S(40), S(66)) };
-            phone.Controls.Add(_firewall);
-            y += S(68);
-            _firewallButton = new ModernButton("Freigeben …", MenuHelper.Shield, false, k) { HeightUnits = 32, Location = new Point(S(20), y) };
-            _firewallButton.UpdateSize();
-            _firewallButton.Click += (s, e) => AllowFirewall();
-            phone.Controls.Add(_firewallButton);
-            y += _firewallButton.Height + S(12);
-            _serverStatus = new Label { ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, Font = new Font("Segoe UI", 8.5f), Location = new Point(S(20), y), Size = new Size(col2W - S(40), S(34)) };
+            _cOpen.Controls.Add(_copy);
+            _qrHint = HintLabel(_cOpen, "Der QR-Code meldet das Handy ohne Passwort an. Er gilt nur einmal, nur solange er hier zu sehen ist (höchstens 10 Minuten) und wird von selbst erneuert.");
+            _steps = HintLabel(_cOpen, "1. QR-Code mit der Handy-Kamera scannen (Handy im WLAN, per VPN oder – wenn eingeschaltet – aus dem Internet).\n" +
+                "2. Das Handy ist sofort angemeldet und bleibt es. Ohne Kamera: Link öffnen und Passwort eingeben.\n" +
+                "3. Im Browsermenü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“ – Wake on LAN öffnet sich dann wie eine App (ohne Browserleiste nur mit HTTPS).");
+            _lStatus = Heading(_cOpen, "Status");
+            _serverStatus = HintLabel(_cOpen, "");
             if (demo || running) { _serverStatus.Text = "Läuft – Handys können sich verbinden."; _serverStatus.ForeColor = Ui.Green; }
             else if (!string.IsNullOrEmpty(runError)) { _serverStatus.Text = "Nicht gestartet: " + runError; _serverStatus.ForeColor = Ui.Red; }
-            phone.Controls.Add(_serverStatus);
-            y += S(36);
-            phone.Height = y + S(4);
+            else _serverStatus.Text = "Startet nach dem Speichern.";
+            _lFirewall = Heading(_cOpen, "Windows-Firewall");
+            _firewall = HintLabel(_cOpen, "");
+            _firewallButton = new ModernButton("Freigeben …", MenuHelper.Shield, false, k) { HeightUnits = 32, Margin = Padding.Empty };
+            _firewallButton.UpdateSize();
+            _firewallButton.Click += (s, e) => AllowFirewall();
+            _cOpen.Controls.Add(_firewallButton);
 
-            // Spalten unten bündig
-            int bottom = Math.Max(basic.Bottom, Math.Max(tls.Bottom, phone.Bottom));
-            basic.Height += bottom - basic.Bottom;
-            tls.Height += bottom - tls.Bottom;
-            phone.Height += bottom - phone.Bottom;
-            foreach (var c in new Control[] { basic, tls, phone }) Controls.Add(c);
+            foreach (var c in new Control[] { _cBasic, _cBack, _cTls, _cNet, _cOpen }) Controls.Add(c);
 
             // ---------- Knöpfe ----------
-            int W = x3 + col2W + margin;
-            y = bottom + S(20);
-            var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = Padding.Empty };
-            var save = new ModernButton("Speichern", '\0', true, k) { Margin = Padding.Empty };
+            var cancel = _cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = Padding.Empty };
+            var save = _save = new ModernButton("Speichern", '\0', true, k) { Margin = Padding.Empty };
             save.Click += (s, e) => Save();
-            cancel.Location = new Point(W - margin - cancel.Width, y);
-            save.Location = new Point(cancel.Left - S(10) - save.Width, y);
-            _error = new Label { ForeColor = Ui.Red, BackColor = Ui.Back, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Location = new Point(margin, y), Size = new Size(save.Left - margin - S(12), save.Height) };
+            _error = new Label { ForeColor = Ui.Red, BackColor = Ui.Back, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
             Controls.Add(_error);
             Controls.Add(save);
             Controls.Add(cancel);
             AcceptButton = save;
             CancelButton = cancel;
-            ClientSize = new Size(W, y + save.Height + margin);
+            // Hinweistexte ändern ihre Höhe: neu anordnen
+            foreach (var l in new[] { _pinHint, _certStatus, _serverStatus, _firewall }) l.TextChanged += (s, e) => Relayout();
+            Arrange(S(1100)); // als eigenes Fenster: zwei Spalten
 
             _enabled.CheckedChanged += (s, e) => UpdateState();
             _https.CheckedChanged += (s, e) =>
@@ -262,59 +233,313 @@ namespace WakeOnLan
 
         // ================================================================== Aufbau (wie Gerät bearbeiten)
 
-        private CardPanel NewCard(string title, int x, int y, int w)
+        private CardPanel _cBasic, _cBack, _cTls, _cNet, _cOpen;
+        private ModernButton _save, _cancel, _browseCert, _browseKey;
+        private Label _lPort, _lAddress, _addressHint, _lPass, _lCert, _lKey, _lCertPassword, _lCertName, _storeHint, _netHint,
+            _qrHint, _steps, _lStatus, _lFirewall;
+        private readonly List<RowRef> _rows = new List<RowRef>();
+        private int _lastWidth;
+        private bool _arranging;
+
+        private sealed class RowRef
         {
-            return new CardPanel(k) { Title = title, Location = new Point(x, y), Width = w, Height = S(100) };
+            public CardPanel Card;
+            public int Index;
+            public Label Title, Desc;
+            public ModernCheck Switch;
         }
 
-        private ModernTextBox Field(CardPanel card, string label, string value, ref int y, int width = 0, int x = 0, bool fullLabel = false)
+        private CardPanel NewCard(string title)
         {
-            if (x == 0) x = S(20);
-            if (width == 0) width = card.Width - S(40);
-            card.Controls.Add(new Label
-            {
-                Text = label,
-                ForeColor = Ui.Text,
-                BackColor = Ui.Card,
-                AutoSize = false,
-                AutoEllipsis = true,
-                Location = new Point(x, y),
-                Size = new Size(fullLabel ? card.Width - x - S(20) : width, S(22))
-            });
-            y += S(24);
-            var box = new ModernTextBox(k) { Location = new Point(x, y), Width = width, Text = value };
+            // Überschrift wie bei Sync Pilot: Semibold 11,5 pt bei x 20 / y 16
+            return new CardPanel(k) { Title = title, TitleSize = 11.5f, TitleTop = 16 };
+        }
+
+        /// <summary>Einstellungszeile wie bei Sync Pilot: Titel, darunter grau die Beschreibung, rechts der Schalter (64 hoch).</summary>
+        private ModernCheck Row(CardPanel card, int index, string title, string desc, bool value)
+        {
+            var sw = new ModernCheck("", k) { Checked = value, Width = S(46), BackColor = Ui.Card };
+            sw.AccessibleName = title;
+            var t = new Label { Text = title, ForeColor = Ui.Text, BackColor = Ui.Card, AutoSize = true, UseMnemonic = false, Cursor = Cursors.Hand };
+            var d = new Label { Text = desc, ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, UseMnemonic = false, Font = new Font("Segoe UI", 8.75f) };
+            t.Click += (s, e) => { if (sw.Enabled) sw.Checked = !sw.Checked; };
+            sw.EnabledChanged += (s, e) => { t.ForeColor = sw.Enabled ? Ui.Text : Ui.Disabled; };
+            card.Controls.Add(t);
+            card.Controls.Add(d);
+            card.Controls.Add(sw);
+            _rows.Add(new RowRef { Card = card, Index = index, Title = t, Desc = d, Switch = sw });
+            return sw;
+        }
+
+        private Label FieldLabel(CardPanel card, string text)
+        {
+            var l = new Label { Text = text, ForeColor = Ui.Text, BackColor = Ui.Card, AutoSize = false, AutoEllipsis = true, UseMnemonic = false };
+            card.Controls.Add(l);
+            return l;
+        }
+
+        private Label Heading(CardPanel card, string text)
+        {
+            var l = new Label { Text = text, ForeColor = Ui.Text, BackColor = Ui.Card, AutoSize = false, UseMnemonic = false, Font = new Font("Segoe UI Semibold", 9.5f) };
+            card.Controls.Add(l);
+            return l;
+        }
+
+        private ModernTextBox Box(CardPanel card, string value)
+        {
+            var box = new ModernTextBox(k) { Text = value };
             card.Controls.Add(box);
-            y += box.Height + S(12);
             return box;
         }
 
-        private ModernCheck Check(CardPanel card, string text, bool value, ref int y)
+        private Label HintLabel(CardPanel card, string text)
         {
-            var c = new ModernCheck(text, k) { Location = new Point(S(18), y), Checked = value };
-            c.Width = card.Width - S(38); // Text links, Schalter rechts
-            card.Controls.Add(c);
-            y += c.Height + S(8);
-            return c;
+            var l = new Label { Text = text, ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, UseMnemonic = false, Font = new Font("Segoe UI", 8.75f) };
+            card.Controls.Add(l);
+            return l;
         }
 
-        private int Hint(CardPanel card, string text, int y)
+        private ModernButton BrowseButton(CardPanel card, Action click)
         {
-            int w = card.Width - S(40);
-            var font = new Font("Segoe UI", 8.5f);
-            int h = TextRenderer.MeasureText(text, font, new Size(w, 0), TextFormatFlags.WordBreak).Height;
-            card.Controls.Add(new Label { Text = text, Font = font, ForeColor = Ui.Muted, BackColor = Ui.Card, AutoSize = false, Location = new Point(S(20), y - S(4)), Size = new Size(w, h + S(2)) });
-            return y - S(4) + h + S(12);
-        }
-
-        private ModernButton Browse(CardPanel card, ModernTextBox box, int w, int colW, Action click)
-        {
-            var b = new ModernButton("", MenuHelper.Folder, false, k) { HeightUnits = 32 };
+            var b = new ModernButton("", MenuHelper.Folder, false, k) { HeightUnits = 32, Margin = Padding.Empty };
             b.UpdateSize();
-            b.Size = new Size(w, S(32));
-            b.Location = new Point(colW - S(20) - w, box.Top);
             b.Click += (s, e) => click();
             card.Controls.Add(b);
             return b;
+        }
+
+        // ================================================================== Anordnung (wie Sync Pilot)
+
+        private void Relayout()
+        {
+            if (_lastWidth > 0) Arrange(_lastWidth);
+        }
+
+        /// <summary>
+        /// Zwei Spalten ab 900 Breite (links 58 %: Steuerung, Im Hintergrund, HTTPS, Internet; rechts "Auf dem Handy öffnen",
+        /// unten bündig mit links), sonst alles untereinander. Speichern/Abbrechen rechts darunter.
+        /// </summary>
+        protected override void OnLoad(EventArgs e)
+        {
+            if (TopLevel && _lastWidth > 0)
+            {
+                // als eigenes Fenster: jetzt mit dem echten Bildschirm neu anordnen und ganz sichtbar machen
+                // (vor base.OnLoad, das die Größe festschreibt)
+                Arrange(_lastWidth);
+                var wa = Screen.FromControl(this).WorkingArea;
+                if (Bottom > wa.Bottom) Top = Math.Max(wa.Top, wa.Bottom - Height);
+                if (Top < wa.Top) Top = wa.Top;
+            }
+            base.OnLoad(e);
+        }
+
+        public void Arrange(int width)
+        {
+            if (_cOpen == null || _arranging) return;
+            _arranging = true;
+            try
+            {
+                _lastWidth = width;
+                // in einem gescrollten Fenster gelten Positionen relativ zur Ansicht: erst nach oben, danach zurück
+                int scrollY = AutoScroll ? -AutoScrollPosition.Y : 0;
+                if (scrollY != 0) AutoScrollPosition = new Point(0, 0);
+                SuspendLayout();
+                int pad = S(24), gap = S(16);
+                int W = Math.Max(S(420), Math.Min(width - 2 * pad, S(1200)));
+                bool two = W >= S(900);
+                int leftW = two ? (W - gap) * 58 / 100 : W;
+                int rightW = two ? W - gap - leftW : W;
+                int y = pad, bottom;
+                if (two)
+                {
+                    // links Steuerung, HTTPS, Internet; rechts "Auf dem Handy öffnen" und "Im Hintergrund" –
+                    // so sind beide Spalten etwa gleich hoch und das Fenster passt auf den Bildschirm
+                    int ly = y;
+                    foreach (var c in new[] { _cBasic, _cTls, _cNet })
+                    {
+                        int h = c == _cBasic ? LayoutBasic(leftW) : c == _cTls ? LayoutTls(leftW) : LayoutNet(leftW);
+                        c.SetBounds(pad, ly, leftW, h);
+                        ly += h + gap;
+                    }
+                    ly -= gap;
+                    int rx = pad + leftW + gap;
+                    int openH = LayoutOpen(rightW), backH = LayoutBack(rightW);
+                    _cOpen.SetBounds(rx, y, rightW, openH);
+                    int ry = y + openH + gap;
+                    _cBack.SetBounds(rx, ry, rightW, Math.Max(backH, ly - ry)); // unten bündig mit links
+                    bottom = Math.Max(ly, _cBack.Bottom);
+                }
+                else
+                {
+                    int ly = y;
+                    foreach (var c in new CardPanel[] { _cBasic, _cBack, _cTls, _cNet, _cOpen })
+                    {
+                        int h = c == _cBasic ? LayoutBasic(W) : c == _cBack ? LayoutBack(W) : c == _cTls ? LayoutTls(W) : c == _cNet ? LayoutNet(W) : LayoutOpen(W);
+                        c.SetBounds(pad, ly, W, h);
+                        ly += h + gap;
+                    }
+                    bottom = ly - gap;
+                }
+                int by = bottom + S(20);
+                _cancel.Location = new Point(pad + W - _cancel.Width, by);
+                _save.Location = new Point(_cancel.Left - S(10) - _save.Width, by);
+                _error.SetBounds(pad, by, Math.Max(S(40), _save.Left - pad - S(12)), _save.Height);
+                // eingebettet scrollt das Fenster selbst (AutoScroll); eine feste Höhe würde Windows auf die
+                // Bildschirmhöhe begrenzen und die Knöpfe unten abschneiden
+                if (TopLevel)
+                {
+                    // als eigenes Fenster höchstens so hoch wie der Bildschirm, sonst scrollen
+                    int need = by + _save.Height + pad;
+                    AutoScroll = false;
+                    ClientSize = new Size(W + 2 * pad, need);
+                    // tatsächliche Fensterhöhe mit Rahmen gegen den Arbeitsbereich prüfen
+                    int max = Screen.FromControl(this).WorkingArea.Height - S(8);
+                    if (Height > max)
+                    {
+                        AutoScroll = true;
+                        AutoScrollMinSize = new Size(0, need);
+                        ClientSize = new Size(W + 2 * pad + SystemInformation.VerticalScrollBarWidth, need - (Height - max));
+                    }
+                }
+                ResumeLayout(true);
+                if (scrollY != 0) AutoScrollPosition = new Point(0, scrollY);
+            }
+            finally { _arranging = false; }
+        }
+
+        /// <summary>Zeilen mit Schalter einer Karte untereinander setzen (ab y = 52, mindestens 64 hoch, die Beschreibung
+        /// bekommt so viele Zeilen wie sie braucht). Liefert das y unter der letzten Zeile.</summary>
+        private int LayoutRows(CardPanel card, int W)
+        {
+            int y = S(52);
+            foreach (var r in _rows)
+            {
+                if (r.Card != card) continue;
+                int dw = Math.Max(S(10), W - S(20) - r.Switch.Width - S(32));
+                int dh = Math.Max(S(20), TextHeight(r.Desc, dw));
+                int h = Math.Max(S(64), S(31) + dh + S(10));
+                r.Switch.SetBounds(W - S(20) - r.Switch.Width, y + (h - r.Switch.Height) / 2, r.Switch.Width, r.Switch.Height);
+                r.Title.Location = new Point(S(20), y + S(10));
+                r.Desc.SetBounds(S(20), y + S(31), dw, dh);
+                y += h;
+            }
+            return y;
+        }
+
+        private int TextHeight(Label l, int width)
+        {
+            if (string.IsNullOrEmpty(l.Text)) return 0;
+            return TextRenderer.MeasureText(l.Text, l.Font, new Size(Math.Max(10, width), 0), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix).Height + S(2);
+        }
+
+        /// <summary>Hinweis an Position y setzen, liefert das neue y darunter.</summary>
+        private int PlaceHint(Label l, int x, int y, int w)
+        {
+            int h = TextHeight(l, w);
+            l.SetBounds(x, y, w, Math.Max(1, h));
+            // eigener Wert statt l.Visible: das liefert false, solange das Fenster noch nicht angezeigt wird
+            bool show = h > 0 && (l != _storeHint || _srcStore.Checked);
+            l.Visible = show;
+            return show ? y + h + S(10) : y;
+        }
+
+        private int LayoutBasic(int W)
+        {
+            int p = S(20), w = W - 2 * p, g = S(12);
+            int y = LayoutRows(_cBasic, W) + S(8);
+            int portW = S(96);
+            _lPort.SetBounds(p, y, portW, S(22));
+            _lAddress.SetBounds(p + portW + g, y, w - portW - g, S(22));
+            y += S(24);
+            _port.SetBounds(p, y, portW, _port.Height);
+            _address.SetBounds(p + portW + g, y, w - portW - g, _address.Height);
+            y += _address.Height + S(8);
+            y = PlaceHint(_addressHint, p, y, w);
+            _lPass.SetBounds(p, y, w, S(22));
+            y += S(24);
+            _setPin.Location = new Point(p, y);
+            _logoutAll.Location = new Point(_setPin.Right + S(8), y);
+            y += _setPin.Height + S(8);
+            y = PlaceHint(_pinHint, p, y, w);
+            return y + S(8);
+        }
+
+        private int LayoutBack(int W)
+        {
+            return LayoutRows(_cBack, W) + S(8);
+        }
+
+        private int LayoutTls(int W)
+        {
+            int p = S(20), w = W - 2 * p, g = S(8);
+            int y = LayoutRows(_cTls, W) + S(8);
+            _srcFile.Location = new Point(p, y);
+            _srcStore.Location = new Point(_srcFile.Right + g, y);
+            y += _srcFile.Height + S(14);
+            int bw = S(40);
+            if (!_srcStore.Checked)
+            {
+                _lCert.SetBounds(p, y, w, S(22));
+                y += S(24);
+                _cert.SetBounds(p, y, w - bw - g, _cert.Height);
+                _browseCert.SetBounds(p + w - bw, y, bw, _cert.Height);
+                y += _cert.Height + S(12);
+                _lKey.SetBounds(p, y, w, S(22));
+                y += S(24);
+                _key.SetBounds(p, y, w - bw - g, _key.Height);
+                _browseKey.SetBounds(p + w - bw, y, bw, _key.Height);
+                y += _key.Height + S(12);
+                _lCertPassword.SetBounds(p, y, w, S(22));
+                y += S(24);
+                int pw = Math.Min(S(200), w - _checkCert.Width - g);
+                _certPassword.SetBounds(p, y, pw, _certPassword.Height);
+                _checkCert.Location = new Point(p + pw + g, y + (_certPassword.Height - _checkCert.Height) / 2);
+                y += _certPassword.Height + S(10);
+            }
+            else
+            {
+                _lCertName.SetBounds(p, y, w, S(22));
+                y += S(24);
+                int nw = w - _checkCert.Width - g;
+                _certName.SetBounds(p, y, nw, _certName.Height);
+                _checkCert.Location = new Point(p + nw + g, y + (_certName.Height - _checkCert.Height) / 2);
+                y += _certName.Height + S(10);
+                y = PlaceHint(_storeHint, p, y, w);
+            }
+            y = PlaceHint(_certStatus, p, y, w);
+            return y + S(8);
+        }
+
+        private int LayoutNet(int W)
+        {
+            int p = S(20);
+            int y = LayoutRows(_cNet, W) + S(4);
+            y = PlaceHint(_netHint, p, y, W - 2 * p);
+            return y + S(8);
+        }
+
+        private int LayoutOpen(int W)
+        {
+            int p = S(20), w = W - 2 * p;
+            int y = S(52);
+            int q = Math.Min(S(220), w);
+            _qr.SetBounds((W - q) / 2, y, q, q);
+            y += q + S(10);
+            _url.SetBounds(p, y, w, S(24));
+            y += S(28);
+            _copy.Location = new Point((W - _copy.Width) / 2, y);
+            y += _copy.Height + S(12);
+            y = PlaceHint(_qrHint, p, y, w);
+            y = PlaceHint(_steps, p, y, w);
+            _lStatus.SetBounds(p, y, w, S(22));
+            y += S(24);
+            y = PlaceHint(_serverStatus, p, y, w);
+            _lFirewall.SetBounds(p, y, w, S(22));
+            y += S(24);
+            y = PlaceHint(_firewall, p, y, w);
+            _firewallButton.Location = new Point(p, y);
+            y += _firewallButton.Height + S(16);
+            return y;
         }
 
         private void ChooseFile(ModernTextBox box, string title, string filter, bool isCert)
@@ -379,7 +604,7 @@ namespace WakeOnLan
             }
             _setPin.Text = "Ändern …";
             _setPin.UpdateSize();
-            _logoutAll.Left = _setPin.Right + S(8);
+            Relayout();
             _logoutAll.Enabled = false;
             UpdatePinHint();
             UpdateUrl();
@@ -402,7 +627,7 @@ namespace WakeOnLan
             bool store = _srcStore.Checked;
             foreach (var c in _fileFields) c.Visible = !store;
             foreach (var c in _storeFields) c.Visible = store;
-            _checkCert.Left = store ? S(20) : S(20) + S(180) + S(12);
+            Relayout();
         }
 
         private bool HasCertInput()
@@ -456,7 +681,7 @@ namespace WakeOnLan
             if (_copy.Text == text) return;
             _copy.Text = text;
             _copy.UpdateSize();
-            if (_copy.Parent != null) _copy.Left = (_copy.Parent.Width - _copy.Width) / 2;
+            Relayout();
         }
 
         // ================================================================== Zertifikat und Firewall

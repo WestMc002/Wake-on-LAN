@@ -119,8 +119,13 @@
 
   function zeichnen(d) {
     letzteDaten = d;
-    $('unterzeile').textContent = 'über ' + d.pc;
-    $('copyright').textContent = '© ' + d.year + ' · ' + d.app;
+    var v = $('version');
+    v.textContent = 'Version ' + d.version;
+    v.hidden = false;
+    $('info-titel').textContent = d.app;
+    $('info-version').textContent = 'Version ' + d.version;
+    $('info-pc').textContent = d.pc;
+    $('copyright').textContent = '© ' + d.year + ' Günther Schoder';
     var alle = $('alle');
     alle.querySelector('span').textContent = d.all > 0 ? 'Alle wecken (' + d.all + ')' : 'Alle wecken';
     alle.disabled = d.all === 0;
@@ -178,13 +183,7 @@
     daten.appendChild(zustand);
     if (x.error) daten.appendChild(el('div', 'fehlertext', x.error));
     zeile.appendChild(daten);
-    var w = el('button', 'wecken');
-    w.type = 'button';
-    w.appendChild(symbol(EIN));
-    w.appendChild(el('span', '', 'Wecken'));
-    w.disabled = x.kind === 'busy';
-    w.addEventListener('click', function () { aktion('/api/wake', { name: x.name }, w); });
-    zeile.appendChild(w);
+    // "…" links neben "Wecken": die Wecken-Knöpfe bilden rechts eine ruhige Spalte, bündig mit der Gruppe
     if (x.shutdown || x.ipmi) {
       var m = el('button', 'mehr');
       m.type = 'button';
@@ -194,6 +193,13 @@
       m.addEventListener('click', function () { blattOeffnen(x); });
       zeile.appendChild(m);
     }
+    var w = el('button', 'wecken');
+    w.type = 'button';
+    w.appendChild(symbol(EIN));
+    w.appendChild(el('span', '', 'Wecken'));
+    w.disabled = x.kind === 'busy';
+    w.addEventListener('click', function () { aktion('/api/wake', { name: x.name }, w); });
+    zeile.appendChild(w);
     return zeile;
   }
 
@@ -275,6 +281,14 @@
     anfrage('POST', '/api/logout', {}).then(zeigeAnmeldung, zeigeAnmeldung);
   });
   $('blatt-abbrechen').addEventListener('click', blattSchliessen);
+  function info(an) {
+    $('info').hidden = !an;
+    $('info-hintergrund').hidden = !an;
+  }
+  $('version').addEventListener('click', function () { info(true); });
+  $('info-schliessen').addEventListener('click', function () { info(false); });
+  $('info-hintergrund').addEventListener('click', function () { info(false); });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { info(false); blattSchliessen(); } });
   $('blatt-hintergrund').addEventListener('click', blattSchliessen);
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && timer) laden(); });
 
