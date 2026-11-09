@@ -340,9 +340,13 @@ namespace WakeOnLan
             try
             {
                 _lastWidth = width;
-                // in einem gescrollten Fenster gelten Positionen relativ zur Ansicht: erst nach oben, danach zurück
+                // In einem gescrollten Fenster gelten Positionen relativ zur Ansicht. Eingebettet nicht erst nach oben
+                // und wieder zurück scrollen (das flackert sichtbar, z. B. beim Klick auf "Zertifikatsdatei"), sondern
+                // die Karten am Ende um die Scrollposition verschieben; währenddessen nicht zeichnen.
                 int scrollY = AutoScroll ? -AutoScrollPosition.Y : 0;
-                if (scrollY != 0) AutoScrollPosition = new Point(0, 0);
+                bool embedded = !TopLevel;
+                if (scrollY != 0 && !embedded) AutoScrollPosition = new Point(0, 0);
+                if (embedded && IsHandleCreated) SendMessage(Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
                 SuspendLayout();
                 int pad = S(24), gap = S(16);
                 int W = Math.Max(S(420), Math.Min(width - 2 * pad, S(1200)));
@@ -402,11 +406,25 @@ namespace WakeOnLan
                         ClientSize = new Size(W + 2 * pad + SystemInformation.VerticalScrollBarWidth, need - (Height - max));
                     }
                 }
+                if (embedded && scrollY != 0)
+                    foreach (Control c in Controls) c.Top -= scrollY;
                 ResumeLayout(true);
-                if (scrollY != 0) AutoScrollPosition = new Point(0, scrollY);
+                if (scrollY != 0 && !embedded) AutoScrollPosition = new Point(0, scrollY);
             }
-            finally { _arranging = false; }
+            finally
+            {
+                _arranging = false;
+                if (!TopLevel && IsHandleCreated)
+                {
+                    SendMessage(Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                    Invalidate(true);
+                }
+            }
         }
+
+        private const int WM_SETREDRAW = 0x000B;
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
         /// <summary>Zeilen mit Schalter einer Karte untereinander setzen (ab y = 52, mindestens 64 hoch, die Beschreibung
         /// bekommt so viele Zeilen wie sie braucht). Liefert das y unter der letzten Zeile.</summary>

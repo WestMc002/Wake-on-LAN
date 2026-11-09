@@ -1009,7 +1009,7 @@ namespace WakeOnLan
             var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = Ui.Card };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, S(118)));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            var tip = new ToolTip();
+            var tip = new ModernToolTip();
             string built;
             try { built = File.GetLastWriteTime(Application.ExecutablePath).ToString("dd.MM.yyyy"); }
             catch { built = "-"; }
@@ -1089,7 +1089,7 @@ namespace WakeOnLan
             var check = new ModernButton("Jetzt prüfen", MenuHelper.Refresh, false, k) { Margin = Padding.Empty };
             var install = new ModernButton("Aktualisieren", MenuHelper.Download, true, k) { Margin = Padding.Empty };
             var page = new ModernButton("Release-Seite", MenuHelper.Link, false, k) { Margin = Padding.Empty };
-            var tip = new ToolTip();
+            var tip = new ModernToolTip();
             tip.SetToolTip(install, "Programm beenden, auf die neue Version aktualisieren und neu starten");
             foreach (var b in new[] { check, install, page })
             {

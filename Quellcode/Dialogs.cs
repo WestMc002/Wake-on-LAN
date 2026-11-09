@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace WakeOnLan
@@ -196,6 +197,126 @@ namespace WakeOnLan
             Color fore = back == Ui.Primary ? Ui.PrimaryText : Color.White;
             using (var font = new Font("Segoe UI Semibold", 13f))
                 TextRenderer.DrawText(g, sign, font, r, fore, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+        }
+    }
+    /// <summary>
+    /// Moderner Ordnerdialog von Windows (wie im Explorer, folgt hell/dunkel) statt der alten Baumansicht des
+    /// FolderBrowserDialog. Rückfall auf den FolderBrowserDialog, falls der COM-Dialog nicht verfügbar ist.
+    /// </summary>
+    internal static class FolderPicker
+    {
+        public static string Pick(IWin32Window owner, string title, string initial = null)
+        {
+            try
+            {
+                var dlg = (IFileOpenDialog)new FileOpenDialogCom();
+                try
+                {
+                    uint opts;
+                    dlg.GetOptions(out opts);
+                    dlg.SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+                    if (!string.IsNullOrEmpty(title)) dlg.SetTitle(title);
+                    if (!string.IsNullOrEmpty(initial) && System.IO.Directory.Exists(initial))
+                    {
+                        IShellItem folder;
+                        Guid iid = typeof(IShellItem).GUID;
+                        if (SHCreateItemFromParsingName(initial, IntPtr.Zero, ref iid, out folder) == 0) dlg.SetFolder(folder);
+                    }
+                    int hr = dlg.Show(owner != null ? owner.Handle : IntPtr.Zero);
+                    if (hr != 0) return null; // abgebrochen
+                    IShellItem item;
+                    dlg.GetResult(out item);
+                    string path;
+                    item.GetDisplayName(SIGDN_FILESYSPATH, out path);
+                    return path;
+                }
+                finally { Marshal.ReleaseComObject(dlg); }
+            }
+            catch (COMException) { }
+            catch (InvalidCastException) { }
+            using (var old = new FolderBrowserDialog { Description = title, ShowNewFolderButton = false })
+            {
+                if (!string.IsNullOrEmpty(initial)) old.SelectedPath = initial;
+                return old.ShowDialog(owner) == DialogResult.OK ? old.SelectedPath : null;
+            }
+        }
+
+        private const uint FOS_PICKFOLDERS = 0x20, FOS_FORCEFILESYSTEM = 0x40, FOS_PATHMUSTEXIST = 0x800;
+        private const uint SIGDN_FILESYSPATH = 0x80058000;
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+        private static extern int SHCreateItemFromParsingName(string path, IntPtr pbc, ref Guid riid, out IShellItem item);
+
+        [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")]
+        private class FileOpenDialogCom { }
+
+        [ComImport, Guid("d57c7288-d4ad-4768-be02-9d969532d960"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IFileOpenDialog
+        {
+            [PreserveSig] int Show(IntPtr parent);
+            void SetFileTypes(uint count, IntPtr filters);
+            void SetFileTypeIndex(uint index);
+            void GetFileTypeIndex(out uint index);
+            void Advise(IntPtr events, out uint cookie);
+            void Unadvise(uint cookie);
+            void SetOptions(uint options);
+            void GetOptions(out uint options);
+            void SetDefaultFolder(IShellItem item);
+            void SetFolder(IShellItem item);
+            void GetFolder(out IShellItem item);
+            void GetCurrentSelection(out IShellItem item);
+            void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string name);
+            void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string name);
+            void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+            void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string text);
+            void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+            void GetResult(out IShellItem item);
+            void AddPlace(IShellItem item, int place);
+            void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string ext);
+            void Close(int hr);
+            void SetClientGuid(ref Guid guid);
+            void ClearClientData();
+            void SetFilter(IntPtr filter);
+            void GetResults(out IntPtr items);
+            void GetSelectedItems(out IntPtr items);
+        }
+
+        [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellItem
+        {
+            void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+            void GetParent(out IShellItem parent);
+            void GetDisplayName(uint sigdn, [MarshalAs(UnmanagedType.LPWStr)] out string name);
+            void GetAttributes(uint mask, out uint attributes);
+            void Compare(IShellItem other, uint hint, out int order);
+        }
+    }
+
+    /// <summary>Tooltip im Programmdesign: Kartenfarbe, feiner Rand, Text in Ui.Text – passend zu hell und dunkel.</summary>
+    internal sealed class ModernToolTip : ToolTip
+    {
+        private static readonly Font TipFont = new Font("Segoe UI", 9f);
+        private const TextFormatFlags Flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.Top;
+
+        public ModernToolTip()
+        {
+            OwnerDraw = true;
+            Popup += (s, e) =>
+            {
+                float k;
+                using (var g = Graphics.FromHwnd(IntPtr.Zero)) k = g.DpiX / 96f;
+                string text = GetToolTip(e.AssociatedControl) ?? "";
+                var size = TextRenderer.MeasureText(text, TipFont, new Size((int)(400 * k), 0), Flags);
+                e.ToolTipSize = new Size(size.Width + (int)(20 * k), size.Height + (int)(12 * k));
+            };
+            Draw += (s, e) =>
+            {
+                float k = e.Graphics.DpiX / 96f;
+                using (var back = new SolidBrush(Ui.Card)) e.Graphics.FillRectangle(back, e.Bounds);
+                using (var pen = new Pen(Ui.Border)) e.Graphics.DrawRectangle(pen, 0, 0, e.Bounds.Width - 1, e.Bounds.Height - 1);
+                var r = new Rectangle((int)(10 * k), (int)(6 * k), e.Bounds.Width - (int)(20 * k), e.Bounds.Height - (int)(12 * k));
+                TextRenderer.DrawText(e.Graphics, e.ToolTipText, TipFont, r, Ui.Text, Flags);
+            };
         }
     }
 }

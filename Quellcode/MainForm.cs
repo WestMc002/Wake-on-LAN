@@ -28,7 +28,7 @@ namespace WakeOnLan
         private readonly Panel _bar;
         private readonly Label _message;
         private readonly ModernButton _wakeAll;
-        private readonly ToolTip _tip = new ToolTip();
+        private readonly ToolTip _tip = new ModernToolTip();
         private readonly System.Windows.Forms.Timer _timer = new System.Windows.Forms.Timer { Interval = 1000 };
         private readonly List<DeviceRow> _rows = new List<DeviceRow>();
         private readonly List<GroupHeader> _headers = new List<GroupHeader>();
@@ -1451,12 +1451,13 @@ namespace WakeOnLan
 
         private void ImportScripts()
         {
-            using (var dlg = new FolderBrowserDialog { Description = "Ordner mit den Skripten „Wake on LAN (<Gerät>).bat“ auswählen", ShowNewFolderButton = false })
+            // moderner Ordnerdialog (wie im Explorer) statt der alten Baumansicht
+            string folder = FolderPicker.Pick(this, "Ordner mit den Skripten „Wake on LAN (<Gerät>).bat“ auswählen");
+            if (folder == null) return;
             {
-                if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 string summary;
                 List<Device> found;
-                try { found = ScriptImport.Read(dlg.SelectedPath, out summary); }
+                try { found = ScriptImport.Read(folder, out summary); }
                 catch (Exception ex)
                 {
                     MessageBox.Show(this, "Die Skripte konnten nicht gelesen werden:\r\n\r\n" + ex.Message, Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
