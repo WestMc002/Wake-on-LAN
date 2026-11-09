@@ -14,6 +14,7 @@ Im Design von Windows 11 (hell und dunkel, mit der Windows-Akzentfarbe), mit Gru
 |---|---|
 | ![Menü eines Geräts hell](Screenshots/menue-hell.png) | ![Menü eines Geräts dunkel](Screenshots/menue-dunkel.png) |
 | ![Gerät bearbeiten hell](Screenshots/geraet-hell.png) | ![Gerät bearbeiten dunkel](Screenshots/geraet-dunkel.png) |
+| ![Zeitpläne hell](Screenshots/zeitplaene-hell.png) | ![Zeitpläne dunkel](Screenshots/zeitplaene-dunkel.png) |
 | ![Steuerung per Handy hell](Screenshots/handy-hell.png) | ![Steuerung per Handy dunkel](Screenshots/handy-dunkel.png) |
 | ![Info hell](Screenshots/info-hell.png) | ![Info dunkel](Screenshots/info-dunkel.png) |
 

@@ -28,6 +28,26 @@ namespace WakeOnLan
     /// </summary>
     internal static class Schedules
     {
+        /// <summary>
+        /// Uhrzeit großzügig lesen (wie Sync Pilot): "07:00", "7:00", "0700", "700", "7", "19.45", "19 Uhr" → "HH:MM".
+        /// </summary>
+        public static bool TryParseTime(string text, out string at)
+        {
+            at = null;
+            string t = (text ?? "").Trim();
+            if (t.EndsWith("Uhr", StringComparison.OrdinalIgnoreCase)) t = t.Substring(0, t.Length - 3).Trim();
+            t = t.Replace('.', ':').Replace(',', ':').Replace(' ', ':').Replace('h', ':').Replace('H', ':').TrimEnd(':');
+            // nur Ziffern: "2330" -> 23:30, "930" -> 09:30, "23" -> 23:00, "7" -> 07:00
+            if (t.Length >= 3 && t.Length <= 4 && t.All(char.IsDigit)) t = t.Substring(0, t.Length - 2) + ":" + t.Substring(t.Length - 2);
+            string[] parts = t.Split(':');
+            int h, m = 0;
+            if (parts.Length < 1 || parts.Length > 2 || !int.TryParse(parts[0], out h)) return false;
+            if (parts.Length == 2 && !int.TryParse(parts[1], out m)) return false;
+            if (h < 0 || h > 23 || m < 0 || m > 59) return false;
+            at = h.ToString("00") + ":" + m.ToString("00");
+            return true;
+        }
+
         public const string Prefix = "Wake on LAN - ";
         private static readonly XNamespace Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
         public static readonly string[] DayNames = { "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So" };
@@ -44,6 +64,7 @@ namespace WakeOnLan
 
         public static List<ScheduleEntry> List()
         {
+            if (Demo.Active) return DemoEntries();
             var result = new List<ScheduleEntry>();
             dynamic folder = Root();
             dynamic tasks = folder.GetTasks(1); // TASK_ENUM_HIDDEN
@@ -145,12 +166,14 @@ namespace WakeOnLan
 
         public static void Delete(string name)
         {
+            if (Demo.Active) return;
             dynamic folder = Root();
             folder.DeleteTask(Prefix + name, 0);
         }
 
         public static void SetEnabled(string name, bool on)
         {
+            if (Demo.Active) return;
             dynamic folder = Root();
             dynamic task = folder.GetTask(Prefix + name);
             task.Enabled = on;
@@ -161,6 +184,27 @@ namespace WakeOnLan
         {
             foreach (char c in new[] { '\\', '/', ':', '*', '?', '"', '<', '>', '|' }) name = name.Replace(c, '-');
             return name.Trim();
+        }
+
+        /// <summary>Erfundene Zeitpläne für die Screenshots (--screenshots); die echte Aufgabenplanung bleibt unberührt.</summary>
+        private static List<ScheduleEntry> DemoEntries()
+        {
+            Func<int, DayOfWeek[], int, int, DateTime> next = (unused, days, h, m) =>
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    var d = DateTime.Today.AddDays(i).AddHours(h).AddMinutes(m);
+                    if (d > DateTime.Now && days.Contains(d.DayOfWeek)) return d;
+                }
+                return DateTime.Today.AddDays(1).AddHours(h).AddMinutes(m);
+            };
+            var workdays = new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday };
+            return new List<ScheduleEntry>
+            {
+                new ScheduleEntry { Name = "Alle wecken Mo–Fr 07.00", Summary = "Alle wecken · Mo–Fr · 07:00 Uhr", Enabled = true, NextRun = next(0, workdays, 7, 0) },
+                new ScheduleEntry { Name = "Gruppe Server Sa 08.30", Summary = "Gruppe „Server“ · Sa · 08:30 Uhr", Enabled = true, NextRun = next(0, new[] { DayOfWeek.Saturday }, 8, 30) },
+                new ScheduleEntry { Name = "Spiele-PC Fr, Sa 18.00", Summary = "Spiele-PC · Fr, Sa · 18:00 Uhr", Enabled = false, NextRun = null }
+            };
         }
 
         public static string DaysText(bool[] days)
@@ -174,12 +218,14 @@ namespace WakeOnLan
     }
 
     /// <summary>Fenster "Zeitpläne": vorhandene Aufgaben mit Schalter (aktiv) und Löschen, dazu "Neuer Zeitplan".</summary>
-    internal sealed class ScheduleForm : FixedForm
+    internal sealed class ScheduleForm : FixedForm, IViewLayout
     {
         private readonly float k;
         private readonly DeviceStore _store;
         private readonly FlowLayoutPanel _list;
-        private readonly Label _error;
+        private readonly Label _error, _intro;
+        private readonly ModernButton _add, _close;
+        private int _width;
 
         /// <summary>Öffnet "Neuer Zeitplan" im Hauptfenster (gesetzt, wenn die Liste als Ansicht läuft).</summary>
         public Action OpenNew;
@@ -197,7 +243,7 @@ namespace WakeOnLan
             using (var g = CreateGraphics()) k = g.DpiX / 96f;
             int W = S(640), m = S(24);
 
-            Controls.Add(new Label
+            _intro = new Label
             {
                 Text = "Geräte, Gruppen oder „Alle wecken“ zu festen Zeiten wecken. Die Zeitpläne liegen in der Windows-Aufgabenplanung " +
                        "und laufen, solange du an diesem PC angemeldet bist – auch wenn dieses Fenster geschlossen ist.",
@@ -205,7 +251,8 @@ namespace WakeOnLan
                 BackColor = Ui.Back,
                 Location = new Point(m, m),
                 Size = new Size(W - 2 * m, S(44))
-            });
+            };
+            Controls.Add(_intro);
             _list = new FlowLayoutPanel
             {
                 Location = new Point(m, m + S(56)),
@@ -232,12 +279,46 @@ namespace WakeOnLan
             Controls.Add(_error);
             Controls.Add(close);
             CancelButton = close;
+            _add = add;
+            _close = close;
             ClientSize = new Size(W, y + close.Height + m);
             Fill();
+            Arrange(S(760)); // als eigenes Fenster (Screenshots): Text ganz, Liste so hoch wie die Einträge
             Theme.Apply(this);
         }
 
         private int S(float v) { return (int)Math.Round(v * k); }
+
+        /// <summary>
+        /// Als Ansicht im Hauptfenster: ganze Breite nutzen, Liste so hoch wie ihre Einträge (die Ansicht scrollt selbst),
+        /// "Neuer Zeitplan" darunter; "Schließen" entfällt (die Navigation führt zurück).
+        /// </summary>
+        public void Arrange(int width)
+        {
+            _width = width;
+            int m = S(24), w = Math.Max(S(400), width - 2 * m);
+            int scrollY = AutoScroll ? AutoScrollPosition.Y : 0;
+            SuspendLayout();
+            _intro.SetBounds(m, m + scrollY, w, TextRenderer.MeasureText(_intro.Text, _intro.Font, new Size(w, 0),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix).Height + S(4));
+            int rowW = w;
+            int h = 0;
+            foreach (Control c in _list.Controls)
+            {
+                if (c is CardPanel) c.Width = rowW;
+                h += c.Height + c.Margin.Vertical;
+            }
+            _list.AutoScroll = false;
+            _list.SetBounds(m, _intro.Bottom + S(12), w, Math.Max(S(40), h));
+            int y = _list.Bottom + S(16);
+            _add.Location = new Point(m, y);
+            _close.Visible = TopLevel; // im Hauptfenster führt die Navigation zurück
+            _close.Location = new Point(m + w - _close.Width, y);
+            int errRight = TopLevel ? _close.Left - S(12) : m + w;
+            _error.SetBounds(_add.Right + S(12), y, Math.Max(S(40), errRight - _add.Right - S(12)), _add.Height);
+            if (TopLevel) ClientSize = new Size(w + 2 * m, y + _add.Height + m);
+            ResumeLayout(true);
+        }
 
         private void Fill()
         {
@@ -257,8 +338,10 @@ namespace WakeOnLan
             int w = _list.ClientSize.Width - SystemInformation.VerticalScrollBarWidth;
             if (entries.Count == 0)
                 _list.Controls.Add(new Label { Text = "Noch keine Zeitpläne.", ForeColor = Ui.Muted, BackColor = Ui.Back, AutoSize = true, Margin = new Padding(0, S(8), 0, 0) });
+            if (_width > 0) w = Math.Max(S(400), _width - 2 * S(24));
             foreach (var e in entries) _list.Controls.Add(Row(e, w));
             _list.ResumeLayout();
+            if (_width > 0) Arrange(_width);
         }
 
         private Control Row(ScheduleEntry e, int width)
@@ -272,7 +355,8 @@ namespace WakeOnLan
                 BackColor = Ui.Card,
                 AutoEllipsis = true,
                 Location = new Point(S(16), S(10)),
-                Size = new Size(width - S(220), S(22))
+                Size = new Size(width - S(220), S(22)),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             });
             string sub = e.Summary;
             if (e.NextRun.HasValue && e.Enabled) sub += (sub.Length > 0 ? " · " : "") + "nächster Lauf " + e.NextRun.Value.ToString("ddd dd.MM. HH:mm");
@@ -284,11 +368,13 @@ namespace WakeOnLan
                 BackColor = Ui.Card,
                 AutoEllipsis = true,
                 Location = new Point(S(16), S(33)),
-                Size = new Size(width - S(220), S(20))
+                Size = new Size(width - S(220), S(20)),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             });
             var toggle = new ToggleSwitch("Aktiv", k);
             toggle.SetChecked(e.Enabled);
             toggle.Location = new Point(width - S(70) - toggle.Width - S(16), (card.Height - toggle.Height) / 2);
+            toggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             string name = e.Name;
             toggle.CheckedChanged += (s, a) =>
             {
@@ -299,6 +385,7 @@ namespace WakeOnLan
             var del = new ModernButton("", MenuHelper.Delete, false, k) { HeightUnits = 30 };
             del.UpdateSize();
             del.Location = new Point(width - S(16) - del.Width, (card.Height - del.Height) / 2);
+            del.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             del.Click += (s, a) =>
             {
                 if (MessageBox.Show(this, "Zeitplan „" + name + "“ löschen?", Ui.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
@@ -344,9 +431,18 @@ namespace WakeOnLan
             Controls.Add(_target);
             y += _target.Height + S(16);
 
-            AddLabel("Uhrzeit (HH:MM)", m, ref y, inner);
+            AddLabel("Uhrzeit", m, ref y, inner);
             _time = new ModernTextBox(k) { Location = new Point(m, y), Width = S(110), Text = "07:00" };
+            // beim Verlassen in die Schreibweise HH:MM bringen (z. B. "0700" -> "07:00"), wie in Sync Pilot
+            _time.Box.Leave += (s, e) =>
+            {
+                string norm;
+                if (Schedules.TryParseTime(_time.Text, out norm) && _time.Text != norm) _time.Text = norm;
+            };
             Controls.Add(_time);
+            var hint = new Label { Text = "z. B. 07:00 oder 0700", ForeColor = Ui.Muted, BackColor = Ui.Back, AutoSize = true, Font = new Font("Segoe UI", 8.75f) };
+            Controls.Add(hint);
+            hint.Location = new Point(_time.Right + S(12), _time.Top + (_time.Height - hint.Height) / 2);
             y += _time.Height + S(16);
 
             AddLabel("Wochentage", m, ref y, inner);
@@ -416,12 +512,14 @@ namespace WakeOnLan
         private void Save()
         {
             TimeSpan time;
-            string t = _time.Text.Trim();
-            if (!TimeSpan.TryParseExact(t, new[] { @"h\:mm", @"hh\:mm" }, null, out time) || time.TotalHours >= 24)
+            string t;
+            if (!Schedules.TryParseTime(_time.Text, out t) || !TimeSpan.TryParseExact(t, @"hh\:mm", null, out time))
             {
-                _error.Text = "Bitte die Uhrzeit als HH:MM eingeben, z. B. 07:00.";
+                _error.Text = "Bitte eine gültige Uhrzeit eingeben, z. B. 07:00 oder 0700.";
+                _time.Box.Focus();
                 return;
             }
+            _time.Text = t;
             var days = _days.Select(c => c.Checked).ToArray();
             if (!days.Any(x => x)) { _error.Text = "Bitte mindestens einen Wochentag wählen."; return; }
             string summary = _targetText + " · " + Schedules.DaysText(days) + " · " + time.ToString(@"hh\:mm") + " Uhr";

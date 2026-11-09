@@ -268,6 +268,10 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.55.2026.1109 Neuer Zeitplan: Uhrzeit auch als "0700", "700", "7" oder
+                 "19.45" eingeben, wird automatisch zu HH:MM; Zeitpläne nutzen
+                 im Hauptfenster die ganze Breite (ohne "Schließen");
+                 Screenshot der Zeitpläne für GitHub
   1.52.2026.1109 Ordner auswählen (Aus alten Skripten übernehmen) mit dem
                  modernen Windows-Ordnerdialog; Tooltips passend zu hell und
                  dunkel; Steuerung per Handy: kein Flackern mehr beim
