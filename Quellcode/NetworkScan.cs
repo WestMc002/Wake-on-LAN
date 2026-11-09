@@ -114,8 +114,8 @@ namespace WakeOnLan
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = Padding.Empty };
             _add = new ModernButton("Hinzufügen", MenuHelper.Add, true, k) { Margin = Padding.Empty, Enabled = false };
             _add.Click += (s, e) => Accept();
-            cancel.Location = new Point(m + w - cancel.Width, y);
-            _add.Location = new Point(cancel.Left - S(10) - _add.Width, y);
+            _add.Location = new Point(m + w - _add.Width, y); // "Abbrechen" links, "Hinzufügen" ganz rechts
+            cancel.Location = new Point(_add.Left - S(10) - cancel.Width, y);
             Controls.Add(_add);
             Controls.Add(cancel);
             CancelButton = cancel;
@@ -280,9 +280,12 @@ namespace WakeOnLan
         private void UpdateAddButton()
         {
             int n = _rows.Count(r => r.Selected);
+            // rechte Kante bleibt, "Abbrechen" rückt mit
+            int right = _add.Right;
             _add.Text = n > 1 ? "Hinzufügen (" + n + ")" : "Hinzufügen";
             _add.UpdateSize();
-            _add.Left = CancelButton is Control ? ((Control)CancelButton).Left - S(10) - _add.Width : _add.Left;
+            _add.Left = right - _add.Width;
+            if (CancelButton is Control) ((Control)CancelButton).Left = _add.Left - S(10) - ((Control)CancelButton).Width;
             _add.Enabled = n > 0;
         }
 

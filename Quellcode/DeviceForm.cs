@@ -13,8 +13,14 @@ using System.Windows.Forms;
 namespace WakeOnLan
 {
     /// <summary>Dialog "Gerät bearbeiten" in drei Spalten: Allgemein und Status | Weckpaket | IPMI und Anstoßen.</summary>
-    internal sealed class DeviceForm : FixedForm
+    internal sealed class DeviceForm : FixedForm, IViewLayout
     {
+        // Karten und Knöpfe für die Anordnung nach Breite (1–3 Spalten, als Ansicht im Hauptfenster)
+        private CardPanel _cGeneral, _cStatus, _cMagic, _cIpmi, _cPort;
+        private readonly Dictionary<CardPanel, int> _natural = new Dictionary<CardPanel, int>();
+        private ModernButton _saveButton, _cancelButton;
+        private int _margin, _gap, _colW;
+
         private readonly float k;
         private readonly Device _original;
         private readonly DeviceStore _store;
@@ -152,11 +158,11 @@ namespace WakeOnLan
             _portFields.Add(_port);
             port.Height = y + S(8);
 
-            // Spalten unten bündig
+            _cGeneral = general; _cStatus = status; _cMagic = magic; _cIpmi = ipmi; _cPort = port;
+            foreach (var c in new[] { general, status, magic, ipmi, port }) _natural[c] = c.Height;
+            _margin = margin; _gap = gap; _colW = colW;
+            MakeStretchable();
             int bottom = Math.Max(status.Bottom, Math.Max(magic.Bottom, port.Bottom));
-            status.Height += bottom - status.Bottom;
-            magic.Height += bottom - magic.Bottom;
-            port.Height += bottom - port.Bottom;
 
             foreach (var c in new Control[] { general, status, magic, ipmi, port }) Controls.Add(c);
 
@@ -166,8 +172,8 @@ namespace WakeOnLan
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = Padding.Empty };
             var save = new ModernButton("Speichern", '\0', true, k) { Margin = Padding.Empty };
             save.Click += (s, e) => Save();
-            cancel.Location = new Point(W - margin - cancel.Width, y);
-            save.Location = new Point(cancel.Left - S(10) - save.Width, y);
+            save.Location = new Point(W - margin - save.Width, y); // "Abbrechen" links, "Speichern" ganz rechts
+            cancel.Location = new Point(save.Left - S(10) - cancel.Width, y);
             _error = new Label
             {
                 ForeColor = Ui.Red,
@@ -175,15 +181,17 @@ namespace WakeOnLan
                 AutoEllipsis = true,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Location = new Point(margin, y),
-                Size = new Size(save.Left - margin - S(12), save.Height)
+                Size = new Size(cancel.Left - margin - S(12), save.Height)
             };
             Controls.Add(_error);
             Controls.Add(save);
             Controls.Add(cancel);
-            AcceptButton = null; // Enter im MAC-Feld ist ein Zeilenumbruch
+            AcceptButton = null; // Enter = Speichern über ProcessDialogKey, im MAC-Feld bleibt Enter ein Zeilenumbruch
             CancelButton = cancel;
+            _saveButton = save;
+            _cancelButton = cancel;
 
-            ClientSize = new Size(W, y + save.Height + margin);
+            Arrange(W); // als eigenes Fenster (Screenshots): drei Spalten
 
             _useMagic.CheckedChanged += (s, e) => UpdateEnabled();
             _usePort.CheckedChanged += (s, e) => UpdateEnabled();
@@ -195,6 +203,84 @@ namespace WakeOnLan
         }
 
         private int S(float v) { return (int)Math.Round(v * k); }
+
+        /// <summary>
+        /// Karten nach verfügbarer Breite in 3, 2 oder 1 Spalte anordnen (Kartenbreite bleibt), Spalten unten bündig;
+        /// darunter rechts "Abbrechen" und "Speichern", links davon die Fehlerzeile.
+        /// </summary>
+        public void Arrange(int width)
+        {
+            int m = _margin, g = _gap;
+            int cols = width >= 2 * m + 3 * _colW + 2 * g ? 3 : width >= 2 * m + 2 * _colW + g ? 2 : 1;
+            // Karten nutzen die ganze Breite (mindestens die ursprüngliche Spaltenbreite)
+            int cw = Math.Max(_colW, (width - 2 * m - (cols - 1) * g) / cols);
+            List<CardPanel>[] layout;
+            if (cols == 3) layout = new[] { new List<CardPanel> { _cGeneral, _cStatus }, new List<CardPanel> { _cMagic }, new List<CardPanel> { _cIpmi, _cPort } };
+            else if (cols == 2) layout = new[] { new List<CardPanel> { _cGeneral, _cStatus, _cPort }, new List<CardPanel> { _cMagic, _cIpmi } };
+            else layout = new[] { new List<CardPanel> { _cGeneral, _cStatus, _cMagic, _cIpmi, _cPort } };
+
+            int scrollY = AutoScroll ? AutoScrollPosition.Y : 0;
+            int bottom = 0;
+            for (int i = 0; i < layout.Length; i++)
+            {
+                int y = m + scrollY;
+                foreach (var c in layout[i])
+                {
+                    c.SetBounds(m + i * (cw + g), y, cw, _natural[c]);
+                    y = c.Bottom + g;
+                }
+                bottom = Math.Max(bottom, y - g);
+            }
+            if (cols > 1) // Spalten unten bündig: die letzte Karte jeder Spalte wächst
+                foreach (var col in layout) { var last = col[col.Count - 1]; last.Height += bottom - last.Bottom; }
+
+            int right = m + cols * cw + (cols - 1) * g;
+            int by = bottom + S(20);
+            _saveButton.Location = new Point(right - _saveButton.Width, by);
+            _cancelButton.Location = new Point(_saveButton.Left - S(10) - _cancelButton.Width, by);
+            _error.SetBounds(m, by, Math.Max(S(40), _cancelButton.Left - m - S(12)), _saveButton.Height);
+            if (TopLevel) ClientSize = new Size(right + m, by - scrollY + _saveButton.Height + m);
+        }
+
+        /// <summary>
+        /// Inhalte der Karten wachsen mit der Kartenbreite: Felder, Texte und Schalter über die ganze Breite per Anchor,
+        /// Knöpfe am rechten Rand bleiben rechts, Feldpaare (Benutzer/Kennwort, BMC-Adresse/Benutzer) teilen sich die Breite.
+        /// </summary>
+        private void MakeStretchable()
+        {
+            foreach (var card in new[] { _cGeneral, _cStatus, _cMagic, _cIpmi, _cPort })
+            {
+                int inner = _colW - S(20);
+                foreach (Control c in card.Controls)
+                {
+                    bool reachesRight = c.Right >= inner - S(2);
+                    bool startsLeft = c.Left <= S(22);
+                    if (reachesRight && startsLeft) c.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                    else if (reachesRight && c is Button) c.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                    else if (startsLeft && c == _ipmiTool) c.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                }
+            }
+            SplitPair(_cStatus, _shutdownUser, _shutdownPassword);
+            SplitPair(_cIpmi, _ipmiHost, _ipmiUser);
+        }
+
+        /// <summary>Zwei Felder nebeneinander je halb so breit wie die Karte (mit Beschriftung darüber).</summary>
+        private void SplitPair(CardPanel card, Control left, Control right)
+        {
+            Func<Control, Label> labelOf = box => card.Controls.OfType<Label>().FirstOrDefault(l => l.Left == box.Left && l.Top == box.Top - S(24));
+            var ll = labelOf(left);
+            var rl = labelOf(right);
+            foreach (var c in new Control[] { left, right, ll, rl }) if (c != null) c.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            card.Resize += (s, e) =>
+            {
+                int half = (card.Width - S(40) - S(12)) / 2;
+                int x2 = S(20) + half + S(12);
+                left.Width = half;
+                right.SetBounds(x2, right.Top, half, right.Height);
+                if (ll != null) ll.Width = half;
+                if (rl != null) rl.SetBounds(x2, rl.Top, half, rl.Height);
+            };
+        }
 
         // ================================================================== Aufbau
 
@@ -300,6 +386,19 @@ namespace WakeOnLan
         }
 
         // ================================================================== Speichern
+
+        /// <summary>Enter = Speichern (globale Vorgabe), außer im mehrzeiligen MAC-Feld.</summary>
+        protected override bool ProcessDialogKey(Keys keyData)
+        {
+            if (keyData == Keys.Enter && !_macs.ContainsFocus)
+            {
+                // auf einem Knopf (z. B. Abbrechen oder Auswahlfeld) bleibt Enter beim Knopf
+                Control c = ActiveControl;
+                while (c is ContainerControl && ((ContainerControl)c).ActiveControl != null) c = ((ContainerControl)c).ActiveControl;
+                if (!(c is IButtonControl)) { Save(); return true; }
+            }
+            return base.ProcessDialogKey(keyData);
+        }
 
         private void Save()
         {
@@ -418,8 +517,8 @@ namespace WakeOnLan
             var ok = new ModernButton("OK", '\0', true, k) { Margin = Padding.Empty };
             ok.Click += (s, e) => { if (_box.Text.Trim().Length > 0) { DialogResult = DialogResult.OK; Close(); } };
             int by = _box.Bottom + (int)(20 * k);
-            cancel.Location = new Point(m + w - cancel.Width, by);
-            ok.Location = new Point(cancel.Left - (int)(10 * k) - ok.Width, by);
+            ok.Location = new Point(m + w - ok.Width, by); // "Abbrechen" links, "OK" ganz rechts
+            cancel.Location = new Point(ok.Left - (int)(10 * k) - cancel.Width, by);
             Controls.Add(lbl);
             Controls.Add(_box);
             Controls.Add(ok);

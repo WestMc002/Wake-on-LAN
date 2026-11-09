@@ -381,9 +381,10 @@ namespace WakeOnLan
                     bottom = ly - gap;
                 }
                 int by = bottom + S(20);
-                _cancel.Location = new Point(pad + W - _cancel.Width, by);
-                _save.Location = new Point(_cancel.Left - S(10) - _save.Width, by);
-                _error.SetBounds(pad, by, Math.Max(S(40), _save.Left - pad - S(12)), _save.Height);
+                // "Abbrechen" links, "Speichern" ganz rechts (globale Vorgabe)
+                _save.Location = new Point(pad + W - _save.Width, by);
+                _cancel.Location = new Point(_save.Left - S(10) - _cancel.Width, by);
+                _error.SetBounds(pad, by, Math.Max(S(40), _cancel.Left - pad - S(12)), _save.Height);
                 // eingebettet scrollt das Fenster selbst (AutoScroll); eine feste Höhe würde Windows auf die
                 // Bildschirmhöhe begrenzen und die Knöpfe unten abschneiden
                 if (TopLevel)
@@ -933,10 +934,11 @@ namespace WakeOnLan
             Controls.Add(_error);
             y += S(30);
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = Padding.Empty };
-            var ok = new ModernButton("OK", '\0', true, k) { Margin = Padding.Empty };
+            // Unterdialog, der selbst nichts speichert: "Übernehmen" (globale Vorgabe), "Abbrechen" links daneben
+            var ok = new ModernButton("Übernehmen", '\0', true, k) { Margin = Padding.Empty };
             ok.Click += (s, e) => Accept();
-            cancel.Location = new Point(pad + w - cancel.Width, y);
-            ok.Location = new Point(cancel.Left - S(10) - ok.Width, y);
+            ok.Location = new Point(pad + w - ok.Width, y);
+            cancel.Location = new Point(ok.Left - S(10) - cancel.Width, y);
             Controls.Add(ok);
             Controls.Add(cancel);
             AcceptButton = ok;

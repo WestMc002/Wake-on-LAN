@@ -171,7 +171,7 @@ namespace WakeOnLan
             _navPin.IconOnly = true;
             _navDevices = AddNav("Geräte", MenuHelper.Devices, () => { CloseNav(); CloseView(); });
             _navDevices.Selected = true;
-            _navSchedules = AddNav("Zeitpläne", MenuHelper.Clock, () => ShowView(_navSchedules, new ScheduleForm(_store), null));
+            _navSchedules = AddNav("Zeitpläne", MenuHelper.Clock, ShowSchedules);
             _navHistory = AddNav("Verlauf", MenuHelper.History, () => ShowView(_navHistory, new HistoryForm(), null));
             _navRemote = AddNav("Steuerung per Handy", MenuHelper.Phone, OpenRemoteSettings);
             // Einstellungen und übrige Funktionen (früher Knopf "…" oben rechts; auch per Rechtsklick in die freie
@@ -333,10 +333,11 @@ namespace WakeOnLan
         /// Zeigt ein bisheriges Dialogfenster als Ansicht im Inhaltsbereich (ohne Rahmen, eingebettet).
         /// "Schließen", "Abbrechen" bzw. "Speichern" des Fensters führen zurück zur Geräteliste; done erhält das Ergebnis.
         /// </summary>
-        private void ShowView(NavButton item, Form f, Action<DialogResult> done)
+        private void ShowView(NavButton item, Form f, Action<DialogResult> done, string title = null)
         {
+            if (title == null) title = item.Text;
             CloseNav();
-            if (_view != null && _viewTitle.Tag == item) { f.Dispose(); return; } // schon offen
+            if (_view != null && _viewTitle.Tag == item && _viewTitle.Text == title) { f.Dispose(); return; } // schon offen
             CloseView();
             if (!Visible) ShowFromTray();
 
@@ -360,7 +361,7 @@ namespace WakeOnLan
 
             _view = f;
             _viewDone = done;
-            _viewTitle.Text = item.Text;
+            _viewTitle.Text = title;
             _viewTitle.Tag = item;
             foreach (var n in new[] { _navDevices, _navSchedules, _navHistory, _navRemote }) n.Selected = n == item;
 
@@ -410,10 +411,17 @@ namespace WakeOnLan
         {
             var f = _view;
             if (f == null) return;
-            f.DialogResult = DialogResult.Cancel;
-            f.Close();
-            EndView(f);
+            _closingForNav = true; // eine andere Seite wird geöffnet: Rücksprünge (z. B. zur Zeitplan-Liste) entfallen
+            try
+            {
+                f.DialogResult = DialogResult.Cancel;
+                f.Close();
+                EndView(f);
+            }
+            finally { _closingForNav = false; }
         }
+
+        private bool _closingForNav;
 
         private void EndView(Form f)
         {
@@ -1056,19 +1064,26 @@ namespace WakeOnLan
         /// <summary>Geräte über die Netzwerksuche übernehmen: eines zum Bearbeiten, mehrere direkt (Name, IP, MAC).</summary>
         private void AddFromScan()
         {
-            List<Arp.Found> picked;
-            using (var f = new ScanForm(_store))
+            // Suche als Ansicht im Hauptfenster; nach "Hinzufügen" geht es (bei einem Gerät) mit "Gerät hinzufügen" weiter
+            var f = new ScanForm(_store);
+            ShowView(_navDevices, f, result =>
             {
-                if (f.ShowDialog(this) != DialogResult.OK) return;
-                picked = f.Selected.ToList();
-            }
+                if (result != DialogResult.OK) return;
+                var picked = f.Selected.ToList();
+                if (picked.Count > 0 && !_closingForNav) BeginInvoke(new Action(() => AddPicked(picked)));
+            }, "Gerät im Netzwerk suchen");
+        }
+
+        private void AddPicked(List<Arp.Found> picked)
+        {
             if (picked.Count == 1)
             {
-                var d = DeviceForm.Edit(this, ScanForm.ToDevice(picked[0], _store), _store, true);
-                if (d == null) return;
-                _store.Devices.Add(d);
-                SaveAndRebuild();
-                SetMessage(d.Name + " hinzugefügt.", Ui.Muted);
+                EditInView(ScanForm.ToDevice(picked[0], _store), true, d =>
+                {
+                    _store.Devices.Add(d);
+                    SaveAndRebuild();
+                    SetMessage(d.Name + " hinzugefügt.", Ui.Muted);
+                });
                 return;
             }
             var names = new List<string>();
@@ -1082,26 +1097,48 @@ namespace WakeOnLan
             SetMessage(names.Count + " Geräte hinzugefügt: " + string.Join(", ", names) + " – bei Bedarf per Doppelklick anpassen.", Ui.Green);
         }
 
+        /// <summary>
+        /// Gerät bearbeiten bzw. anlegen als Ansicht im Hauptfenster (wie Sync Pilot); "Speichern" ruft saved mit dem
+        /// geänderten Gerät auf, "Abbrechen" oder ein Wechsel über die Navigation verwirft.
+        /// </summary>
+        private void EditInView(Device device, bool isNew, Action<Device> saved)
+        {
+            var f = new DeviceForm(device, _store, isNew);
+            string title = isNew ? "Gerät hinzufügen" : "Gerät bearbeiten – " + device.Name;
+            ShowView(_navDevices, f, result => { if (result == DialogResult.OK && f.Result != null) saved(f.Result); }, title);
+        }
+
+        private void ShowSchedules()
+        {
+            var f = new ScheduleForm(_store);
+            // "Neuer Zeitplan" ebenfalls im selben Fenster; danach zurück zur Liste der Zeitpläne
+            f.OpenNew = () => BeginInvoke(new Action(() =>
+                ShowView(_navSchedules, new ScheduleEditForm(_store), r => { if (!_closingForNav) BeginInvoke(new Action(ShowSchedules)); }, "Neuer Zeitplan")));
+            ShowView(_navSchedules, f, null);
+        }
+
         private void AddDevice()
         {
-            var d = DeviceForm.Edit(this, null, _store);
-            if (d == null) return;
-            _store.Devices.Add(d);
-            SaveAndRebuild();
-            SetMessage(d.Name + " hinzugefügt.", Ui.Muted);
+            EditInView(null, true, d =>
+            {
+                _store.Devices.Add(d);
+                SaveAndRebuild();
+                SetMessage(d.Name + " hinzugefügt.", Ui.Muted);
+            });
         }
 
         private void EditDevice(Device device)
         {
-            var d = DeviceForm.Edit(this, device, _store);
-            if (d == null) return;
-            int i = _store.Devices.IndexOf(device);
-            if (i < 0) return;
-            _store.Devices[i] = d;
-            // Zeile behalten, Status neu prüfen
-            var row = _rows.FirstOrDefault(r => r.Device == device);
-            if (row != null) row.Replace(d);
-            SaveAndRebuild();
+            EditInView(device, false, d =>
+            {
+                int i = _store.Devices.IndexOf(device);
+                if (i < 0) return;
+                _store.Devices[i] = d;
+                // Zeile behalten, Status neu prüfen
+                var row = _rows.FirstOrDefault(r => r.Device == device);
+                if (row != null) row.Replace(d);
+                SaveAndRebuild();
+            });
         }
 
         private void DuplicateDevice(Device device)
@@ -1110,10 +1147,12 @@ namespace WakeOnLan
             string baseName = device.Name + " (Kopie)";
             copy.Name = baseName;
             for (int n = 2; _store.Find(copy.Name) != null; n++) copy.Name = device.Name + " (Kopie " + n + ")";
-            var d = DeviceForm.Edit(this, copy, _store, true);
-            if (d == null) return;
-            _store.Devices.Insert(_store.Devices.IndexOf(device) + 1, d);
-            SaveAndRebuild();
+            EditInView(copy, true, d =>
+            {
+                int at = _store.Devices.IndexOf(device);
+                _store.Devices.Insert(at < 0 ? _store.Devices.Count : at + 1, d);
+                SaveAndRebuild();
+            });
         }
 
         private void DeleteDevice(Device device)

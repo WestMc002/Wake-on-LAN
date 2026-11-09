@@ -181,6 +181,9 @@ namespace WakeOnLan
         private readonly FlowLayoutPanel _list;
         private readonly Label _error;
 
+        /// <summary>Öffnet "Neuer Zeitplan" im Hauptfenster (gesetzt, wenn die Liste als Ansicht läuft).</summary>
+        public Action OpenNew;
+
         public ScheduleForm(DeviceStore store)
         {
             _store = store;
@@ -217,6 +220,8 @@ namespace WakeOnLan
             var add = new ModernButton("Neuer Zeitplan …", MenuHelper.Add, true, k) { Location = new Point(m, y) };
             add.Click += (s, e) =>
             {
+                // im Hauptfenster als eigene Ansicht, sonst als Dialog
+                if (OpenNew != null) { OpenNew(); return; }
                 using (var d = new ScheduleEditForm(_store)) if (d.ShowDialog(this) == DialogResult.OK) Fill();
             };
             var close = new ModernButton("Schließen", '\0', false, k) { DialogResult = DialogResult.Cancel };
@@ -360,10 +365,10 @@ namespace WakeOnLan
             var cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel };
             var save = new ModernButton("Speichern", '\0', true, k);
             save.Click += (s, e) => Save();
-            cancel.Location = new Point(W - m - cancel.Width, y);
-            save.Location = new Point(cancel.Left - S(10) - save.Width, y);
+            save.Location = new Point(W - m - save.Width, y); // "Abbrechen" links, "Speichern" ganz rechts
+            cancel.Location = new Point(save.Left - S(10) - cancel.Width, y);
             _error = new Label { ForeColor = Ui.Red, BackColor = Ui.Back, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(m, y), Size = new Size(save.Left - m - S(12), save.Height) };
+                Location = new Point(m, y), Size = new Size(cancel.Left - m - S(12), save.Height) };
             Controls.Add(_error);
             Controls.Add(save);
             Controls.Add(cancel);
