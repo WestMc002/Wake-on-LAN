@@ -268,6 +268,10 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.57.2026.1110 Steuerung per Handy: "Speichern" bleibt auf der Seite und
+                 zeigt eine kurze grüne Meldung mit dem Link; der Status
+                 wird erst nach dem Start des Webservers angezeigt (keine
+                 Meldung "unbekannter Fehler" mehr)
   1.55.2026.1109 Neuer Zeitplan: Uhrzeit auch als "0700", "700", "7" oder
                  "19.45" eingeben, wird automatisch zu HH:MM; Zeitpläne nutzen
                  im Hauptfenster die ganze Breite (ohne "Schließen");

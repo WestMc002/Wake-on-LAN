@@ -1557,13 +1557,14 @@ namespace WakeOnLan
         // ================================================================== Steuerung per Handy
 
         /// <summary>Webserver nach den Einstellungen (neu) starten; Zertifikat laden kann dauern -> im Hintergrund.</summary>
-        private void StartRemote()
+        /// <summary>Startet den Webserver im Hintergrund neu; done (optional) bekommt danach den Fehler bzw. null.</summary>
+        private void StartRemote(Action<string> done = null)
         {
             int generation = ++_webGeneration;
             if (_web != null) { _web.Dispose(); _web = null; }
             if (_pendingWeb != null) { _pendingWeb.Dispose(); _pendingWeb = null; }
             _webError = null;
-            if (_demo || !_store.Remote.Enabled) { UpdateTray(); return; }
+            if (_demo || !_store.Remote.Enabled) { UpdateTray(); if (done != null) done(null); return; }
             var server = new WebServer(_store.Remote, this);
             _pendingWeb = server;
             ThreadPool.QueueUserWorkItem(_ =>
@@ -1589,6 +1590,7 @@ namespace WakeOnLan
                         CheckFirewallLater();
                     }
                     UpdateTray();
+                    if (done != null) done(error);
                 });
             });
         }
@@ -1609,15 +1611,22 @@ namespace WakeOnLan
         {
             if (FocusOpenDialog()) return;
             if (!Visible) ShowFromTray();
-            ShowView(_navRemote, new RemoteForm(_store, false, _web != null, _webError), result =>
+            var f = new RemoteForm(_store, false, _web != null, _webError);
+            // "Speichern" übernimmt und startet den Server neu, die Seite bleibt offen (globale Vorgabe)
+            // der Server startet im Hintergrund: Ergebnis erst melden, wenn der Start fertig ist
+            f.Saved = report =>
             {
-                if (result != DialogResult.OK) return;
+                string saveError = null;
                 try { _store.Save(); }
-                catch (Exception ex) { SetMessage("Speichern fehlgeschlagen: " + ex.Message, Ui.Red); }
-                StartRemote();
-                UpdateTray();
-                SetMessage(_store.Remote.Enabled ? "Steuerung per Handy: " + _store.Remote.Url(_store.Remote.Address) : "Steuerung per Handy ausgeschaltet.", Ui.Muted);
-            });
+                catch (Exception ex) { saveError = "Speichern fehlgeschlagen: " + ex.Message; }
+                StartRemote(startError =>
+                {
+                    UpdateTray();
+                    string text = _store.Remote.Enabled ? "Gespeichert – Steuerung per Handy: " + _store.Remote.Url(_store.Remote.Address) : "Gespeichert – Steuerung per Handy ausgeschaltet.";
+                    report(Tuple.Create(_web != null, saveError ?? startError, text));
+                });
+            };
+            ShowView(_navRemote, f, null);
         }
 
         /// <summary>Symbol im Infobereich: dauerhaft, solange das Programm im Hintergrund weiterläuft oder versteckt ist.</summary>

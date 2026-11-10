@@ -22,7 +22,7 @@ namespace WakeOnLan
     {
         private readonly float k;
         private readonly DeviceStore _store;
-        private readonly RemoteSettings _r;
+        private RemoteSettings _r;
         private readonly bool _demo;
 
         private ModernCheck _enabled, _background, _autostart, _https, _internet;
@@ -33,7 +33,13 @@ namespace WakeOnLan
         private readonly List<Control> _storeFields = new List<Control>();
         /// <summary>Neues Passwort aus dem Dialog (wird erst beim Speichern übernommen).</summary>
         private string _newPin;
-        private readonly bool _running;
+        private bool _running;
+
+        /// <summary>
+        /// Gesetzt, wenn die Seite im Hauptfenster läuft: übernimmt die gespeicherten Einstellungen (Datei speichern, Server
+        /// neu starten). Liefert (läuft, Fehler, Meldung) zurück; die Seite bleibt offen (globale Vorgabe: Speichern schließt nicht).
+        /// </summary>
+        public Action<Action<Tuple<bool, string, string>>> Saved;
         private string _pairCode;
         private readonly System.Windows.Forms.Timer _qrTimer;
         private Label _pinHint, _certStatus, _url, _firewall, _serverStatus, _error;
@@ -162,9 +168,7 @@ namespace WakeOnLan
                 "3. Im Browsermenü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“ – Wake on LAN öffnet sich dann wie eine App (ohne Browserleiste nur mit HTTPS).");
             _lStatus = Heading(_cOpen, "Status");
             _serverStatus = HintLabel(_cOpen, "");
-            if (demo || running) { _serverStatus.Text = "Läuft – Handys können sich verbinden."; _serverStatus.ForeColor = Ui.Green; }
-            else if (!string.IsNullOrEmpty(runError)) { _serverStatus.Text = "Nicht gestartet: " + runError; _serverStatus.ForeColor = Ui.Red; }
-            else _serverStatus.Text = "Startet nach dem Speichern.";
+            ShowServerStatus(demo || running, runError);
             _lFirewall = Heading(_cOpen, "Windows-Firewall");
             _firewall = HintLabel(_cOpen, "");
             _firewallButton = new ModernButton("Freigeben …", MenuHelper.Shield, false, k) { HeightUnits = 32, Margin = Padding.Empty };
@@ -894,12 +898,48 @@ namespace WakeOnLan
                     }
                 }
             }
+            if (Saved != null && !TopLevel)
+            {
+                _error.ForeColor = Ui.Muted;
+                _error.Text = on ? "Speichern … Webserver startet." : "Speichern …";
+                Saved(result => { if (!IsDisposed) AfterSaved(result); });
+                return;
+            }
             DialogResult = DialogResult.OK;
             Close();
         }
 
+        private void ShowServerStatus(bool running, string runError)
+        {
+            if (running) { _serverStatus.Text = "Läuft – Handys können sich verbinden."; _serverStatus.ForeColor = Ui.Green; }
+            else if (!string.IsNullOrEmpty(runError)) { _serverStatus.Text = "Nicht gestartet: " + runError; _serverStatus.ForeColor = Ui.Red; }
+            else if (!_enabled.Checked) { _serverStatus.Text = "Ausgeschaltet."; _serverStatus.ForeColor = Ui.Muted; }
+            else { _serverStatus.Text = "Startet nach dem Speichern."; _serverStatus.ForeColor = Ui.Muted; }
+        }
+
+        /// <summary>Nach dem Speichern im Hauptfenster: Stand neu einlesen, Seite bleibt offen, kurze grüne Meldung.</summary>
+        private void AfterSaved(Tuple<bool, string, string> result)
+        {
+            _running = result.Item1;
+            _r = _store.Remote.Clone();
+            _newPin = null;
+            _logout = false;
+            _pairCode = null;
+            _certPassword.Text = "";
+            ShowServerStatus(_running, result.Item2);
+            UpdateState();
+            UpdateUrl();
+            _error.ForeColor = string.IsNullOrEmpty(result.Item2) ? Ui.Green : Ui.Red;
+            _error.Text = string.IsNullOrEmpty(result.Item2) ? result.Item3 : "Gespeichert, aber nicht gestartet: " + result.Item2;
+            var t = new System.Windows.Forms.Timer { Interval = 6000 };
+            string shown = _error.Text;
+            t.Tick += (s, e) => { t.Dispose(); if (!IsDisposed && _error.Text == shown) _error.Text = ""; };
+            t.Start();
+        }
+
         private void Fail(string text, ModernTextBox field)
         {
+            _error.ForeColor = Ui.Red;
             _error.Text = text;
             if (field != null) { field.Box.Focus(); field.Box.SelectAll(); }
         }
