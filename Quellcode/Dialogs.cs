@@ -296,25 +296,35 @@ namespace WakeOnLan
     internal sealed class ModernToolTip : ToolTip
     {
         private static readonly Font TipFont = new Font("Segoe UI", 9f);
-        private const TextFormatFlags Flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.Top;
+        // NoPadding: sonst legt Windows beim Messen links und rechts je 3–4 px dazu und der Rand wird größer als vorgegeben
+        private const TextFormatFlags Flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.Left | TextFormatFlags.Top;
+        private const int PadX = 8, PadY = 5; // Innenabstand × Skalierung
 
         public ModernToolTip()
         {
             OwnerDraw = true;
+            AutoPopDelay = 15000; // statt 5 s, damit auch mehrzeilige Texte lesbar bleiben (verschwindet ohnehin, sobald die Maus weggeht)
             Popup += (s, e) =>
             {
+                // mit einem Graphics messen, genau wie gezeichnet wird: ohne Gerätekontext rechnet MeasureText trotz
+                // NoPadding den Windows-Zuschlag ein, und der Rand rechts wird größer als links
                 float k;
-                using (var g = Graphics.FromHwnd(IntPtr.Zero)) k = g.DpiX / 96f;
+                Size size;
                 string text = GetToolTip(e.AssociatedControl) ?? "";
-                var size = TextRenderer.MeasureText(text, TipFont, new Size((int)(400 * k), 0), Flags);
-                e.ToolTipSize = new Size(size.Width + (int)(20 * k), size.Height + (int)(12 * k));
+                using (var g = Graphics.FromHwnd(IntPtr.Zero))
+                {
+                    k = g.DpiX / 96f;
+                    size = TextRenderer.MeasureText(g, text, TipFont, new Size((int)(400 * k), 0), Flags);
+                }
+                // 1 px Reserve in der Breite, damit beim Zeichnen nichts anders umbricht als beim Messen
+                e.ToolTipSize = new Size(size.Width + 1 + 2 * (int)(PadX * k), size.Height + 2 * (int)(PadY * k));
             };
             Draw += (s, e) =>
             {
                 float k = e.Graphics.DpiX / 96f;
                 using (var back = new SolidBrush(Ui.Card)) e.Graphics.FillRectangle(back, e.Bounds);
                 using (var pen = new Pen(Ui.Border)) e.Graphics.DrawRectangle(pen, 0, 0, e.Bounds.Width - 1, e.Bounds.Height - 1);
-                var r = new Rectangle((int)(10 * k), (int)(6 * k), e.Bounds.Width - (int)(20 * k), e.Bounds.Height - (int)(12 * k));
+                var r = new Rectangle((int)(PadX * k), (int)(PadY * k), e.Bounds.Width - 2 * (int)(PadX * k), e.Bounds.Height - 2 * (int)(PadY * k));
                 TextRenderer.DrawText(e.Graphics, e.ToolTipText, TipFont, r, Ui.Text, Flags);
             };
         }

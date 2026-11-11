@@ -407,6 +407,51 @@ namespace WakeOnLan
             }
         }
 
+        // ---------- letzter Zugriff von einem anderen Gerät (seit Programmstart) ----------
+        private static readonly object ClientLock = new object();
+        private static string _lastClient;
+        private static DateTime _lastClientTime, _ownRead;
+        private static HashSet<string> _own;
+
+        /// <summary>
+        /// Adresse und Zeit des letzten Zugriffs von einem anderen Gerät, null wenn es noch keinen gab.
+        /// Das ist der Beweis, dass die Firewalls dieses PCs Verbindungen durchlassen – ein Test vom PC selbst zeigt das nicht.
+        /// </summary>
+        public static string LastClient(out DateTime time)
+        {
+            lock (ClientLock) { time = _lastClientTime; return _lastClient; }
+        }
+
+        /// <summary>Gehört die Adresse zu diesem PC (Loopback oder eine seiner Netzwerkkarten)?</summary>
+        public static bool IsOwnAddress(IPAddress ip)
+        {
+            if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+            if (IPAddress.IsLoopback(ip)) return true;
+            lock (ClientLock)
+            {
+                if (_own == null || (DateTime.UtcNow - _ownRead).TotalSeconds > 60)
+                {
+                    var set = new HashSet<string>();
+                    try
+                    {
+                        foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                            foreach (var a in ni.GetIPProperties().UnicastAddresses)
+                                set.Add(new IPAddress(a.Address.GetAddressBytes()).ToString()); // ohne Zonen-Kennung
+                    }
+                    catch { }
+                    _own = set;
+                    _ownRead = DateTime.UtcNow;
+                }
+                return _own.Contains(new IPAddress(ip.GetAddressBytes()).ToString());
+            }
+        }
+
+        private static void NoteClient(IPAddress ip)
+        {
+            if (IsOwnAddress(ip)) return;
+            lock (ClientLock) { _lastClient = ip.ToString(); _lastClientTime = DateTime.Now; }
+        }
+
         /// <summary>Nur Heimnetz: private IPv4-Bereiche, CGNAT/VPN (100.64/10), Link-Local, Loopback; IPv6 ULA/Link-Local.</summary>
         public static bool IsLocalNetwork(IPAddress ip)
         {
@@ -471,6 +516,7 @@ namespace WakeOnLan
                     var req = r.ReadRequest();
                     if (req == null) return;
                     Interlocked.Exchange(ref _lastRequest, DateTime.UtcNow.Ticks);
+                    if (n == 0) NoteClient(ip);
                     bool keep = !string.Equals(req.Header("Connection"), "close", StringComparison.OrdinalIgnoreCase);
                     var res = new Response(stream, keep) { Secure = https, Head = req.Method == "HEAD" };
                     Route(req, res, ip.ToString(), https, local);
@@ -711,6 +757,79 @@ namespace WakeOnLan
     }
 
     // ====================================================================== HTTP
+
+    /// <summary>
+    /// "Verbindung testen": ruft die laufende Handy-Seite über ihre eingetragene Adresse auf (Name auflösen, verbinden,
+    /// bei HTTPS das Zertifikat prüfen, Antwort lesen). Läuft auf dem PC selbst – zeigt eine Adresse auf diesen PC,
+    /// geht der Test nicht durch dessen Firewall (Own = true).
+    /// </summary>
+    internal static class ConnectionTest
+    {
+        internal sealed class Result
+        {
+            public bool Ok, Own;
+            /// <summary>Fehlertext, wenn Ok = false.</summary>
+            public string Error;
+            /// <summary>Bei HTTPS: was am Zertifikat nicht stimmt (null = in Ordnung).</summary>
+            public string CertProblem;
+        }
+
+        public static Result Run(string host, int port, bool https)
+        {
+            var r = new Result();
+            IPAddress[] ips;
+            try
+            {
+                IPAddress one;
+                ips = IPAddress.TryParse(host, out one) ? new[] { one } : Dns.GetHostAddresses(host);
+            }
+            catch { ips = new IPAddress[0]; }
+            ips = ips.OrderBy(a => a.AddressFamily == AddressFamily.InterNetwork ? 0 : 1).ToArray();
+            if (ips.Length == 0) { r.Error = "Der Name „" + host + "“ lässt sich nicht auflösen."; return r; }
+            r.Own = ips.Any(WebServer.IsOwnAddress);
+            var ip = ips[0];
+            try
+            {
+                using (var client = new TcpClient(ip.AddressFamily))
+                {
+                    var ar = client.BeginConnect(ip, port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(5000)) { r.Error = "Keine Antwort von " + ip + " auf Port " + port + " (Zeitüberschreitung)."; return r; }
+                    client.EndConnect(ar);
+                    client.ReceiveTimeout = 5000;
+                    client.SendTimeout = 5000;
+                    Stream stream = client.GetStream();
+                    if (https)
+                    {
+                        var policy = SslPolicyErrors.None;
+                        var ssl = new SslStream(stream, false, (sender, cert, chain, errors) => { policy = errors; return true; });
+                        ssl.AuthenticateAsClient(host, null, SslProtocols.Tls12, false);
+                        stream = ssl;
+                        if ((policy & SslPolicyErrors.RemoteCertificateNameMismatch) != 0) r.CertProblem = "das Zertifikat gilt nicht für „" + host + "“";
+                        else if (policy != SslPolicyErrors.None) r.CertProblem = "das Zertifikat ist nicht vertrauenswürdig (abgelaufen oder Zwischenzertifikat fehlt)";
+                    }
+                    byte[] request = Encoding.ASCII.GetBytes("GET /manifest.webmanifest HTTP/1.1\r\nHost: " + host + ":" + port + "\r\nConnection: close\r\n\r\n");
+                    stream.Write(request, 0, request.Length);
+                    stream.Flush();
+                    var buffer = new byte[4096];
+                    int total = 0, read;
+                    while (total < buffer.Length && (read = stream.Read(buffer, total, buffer.Length - total)) > 0) total += read;
+                    string answer = Encoding.UTF8.GetString(buffer, 0, total);
+                    if (!answer.StartsWith("HTTP/1.1 200") || answer.IndexOf("Wake on LAN", StringComparison.Ordinal) < 0)
+                    {
+                        r.Error = "Unter " + host + ":" + port + " antwortet etwas anderes als Wake on LAN.";
+                        return r;
+                    }
+                    r.Ok = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException ?? ex;
+                r.Error = "Keine Verbindung zu " + ip + " auf Port " + port + ": " + inner.Message.TrimEnd('.') + ".";
+            }
+            return r;
+        }
+    }
 
     internal sealed class HttpRequest
     {

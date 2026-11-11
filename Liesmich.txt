@@ -117,8 +117,12 @@ BEDIENUNG
                              es nicht im Vordergrund ist; abschaltbar unter
                              "Einstellungen"
   Zeitpläne                  Navigation > Zeitpläne: z. B. Gruppe Server Mo–Fr 07:00
-                             wecken; liegt als "Wake on LAN - …" in der Windows-
-                             Aufgabenplanung und läuft, solange du angemeldet bist
+                             wecken und 19:00 herunterfahren; liegt als
+                             "Wake on LAN - …" in der Windows-Aufgabenplanung und
+                             läuft, solange du angemeldet bist. Ändern über den
+                             Stift oder per Doppelklick. Herunterfahren geht für
+                             Gruppen und einzelne Geräte (ohne Rückfrage), nicht
+                             für "Alle"
   Verlauf                    Navigation > Verlauf: wann was geweckt, online, nicht
                              erreicht oder heruntergefahren wurde
   Export/Import              Einstellungen > Geräteliste exportieren/
@@ -175,6 +179,10 @@ Einrichten:
      Ist zusätzlich ein anderes Firewall-Programm aktiv (z. B. ESET), zeigt
      der Dialog es an – dort muss eingehend TCP auf dem Port ebenfalls
      erlaubt werden (bzw. das Heimnetz als vertrauenswürdig eingestuft sein).
+     "Verbindung testen" ruft die Seite über die eingetragene Adresse auf
+     (Name, Port, Zertifikat). Der Test läuft auf dem PC selbst und geht
+     deshalb nicht durch dessen Firewall; ob andere Geräte durchkommen,
+     zeigt er, sobald sich ein Handy verbunden hat ("Zuletzt verbunden").
   4. QR-Code mit der Handy-Kamera scannen – das Handy ist sofort angemeldet,
      ohne Passwort, und bleibt es. Der QR-Code enthält einen Einmal-Code
      (10 Minuten und nur einmal gültig, wird im offenen Dialog von selbst
@@ -243,6 +251,10 @@ KOMMANDOZEILE
   "Wake on LAN.exe" Büro-PC Spiele-PC   mehrere Geräte
   "Wake on LAN.exe" /alle               alle Geräte von "Alle wecken"
   "Wake on LAN.exe" "/gruppe:Server"    alle Geräte einer Gruppe
+  "Wake on LAN.exe" /herunterfahren Büro-PC
+  "Wake on LAN.exe" /herunterfahren "/gruppe:Server"
+                                        herunterfahren statt wecken, ohne
+                                        Rückfrage (nicht mit /alle)
   "Wake on LAN.exe" /hintergrund        nur im Infobereich starten
                                         (für den Autostart)
   "Wake on LAN.exe" /?                  Hilfe
@@ -268,6 +280,20 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.61.2026.1111 Steuerung per Handy: eigene Karte "Status" (Verbindung testen,
+                 Firewall), in breiten Fenstern drei Spalten; Tooltips: Rand
+                 rechts so groß wie links; Screenshot "Steuerung per Handy"
+                 nicht mehr unten abgeschnitten
+  1.60.2026.1111 Tooltips kompakter (Rand 8 × 5) und 15 statt 5 Sekunden
+                 sichtbar
+  1.59.2026.1111 Neuer Zeitplan/Zeitplan bearbeiten nutzt die ganze Breite:
+                 Karten "Was" und "Wann" nebeneinander, Knöpfe rechts darunter
+  1.58.2026.1111 Zeitpläne: bearbeiten (Stift oder Doppelklick), auch zum
+                 Herunterfahren von Gruppen und Geräten (Kommandozeile:
+                 /herunterfahren), Uhrzeit überall als "07:00"; Geräteliste:
+                 bei wenig Platz fallen ganze Angaben weg statt "Po…", alle
+                 stehen im Tooltip; Steuerung per Handy: "Verbindung testen";
+                 Screenshots zeigen die Ansichten im Hauptfenster
   1.57.2026.1110 Steuerung per Handy: "Speichern" bleibt auf der Seite und
                  zeigt eine kurze grüne Meldung mit dem Link; der Status
                  wird erst nach dem Start des Webservers angezeigt (keine

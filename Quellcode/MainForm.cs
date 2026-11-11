@@ -1108,12 +1108,17 @@ namespace WakeOnLan
             ShowView(_navDevices, f, result => { if (result == DialogResult.OK && f.Result != null) saved(f.Result); }, title);
         }
 
+        private void EditSchedule(ScheduleEntry entry)
+        {
+            var f = new ScheduleEditForm(_store, entry);
+            ShowView(_navSchedules, f, r => { if (!_closingForNav) BeginInvoke(new Action(ShowSchedules)); }, f.Text);
+        }
+
         private void ShowSchedules()
         {
             var f = new ScheduleForm(_store);
-            // "Neuer Zeitplan" ebenfalls im selben Fenster; danach zurück zur Liste der Zeitpläne
-            f.OpenNew = () => BeginInvoke(new Action(() =>
-                ShowView(_navSchedules, new ScheduleEditForm(_store), r => { if (!_closingForNav) BeginInvoke(new Action(ShowSchedules)); }, "Neuer Zeitplan")));
+            // "Neuer Zeitplan" bzw. "Zeitplan bearbeiten" ebenfalls im selben Fenster; danach zurück zur Liste der Zeitpläne
+            f.OpenEdit = entry => BeginInvoke(new Action(() => EditSchedule(entry)));
             ShowView(_navSchedules, f, null);
         }
 
@@ -1611,7 +1616,7 @@ namespace WakeOnLan
         {
             if (FocusOpenDialog()) return;
             if (!Visible) ShowFromTray();
-            var f = new RemoteForm(_store, false, _web != null, _webError);
+            var f = new RemoteForm(_store, _demo, _demo || _web != null, _webError);
             // "Speichern" übernimmt und startet den Server neu, die Seite bleibt offen (globale Vorgabe)
             // der Server startet im Hintergrund: Ergebnis erst melden, wenn der Start fertig ist
             f.Saved = report =>
@@ -1826,6 +1831,39 @@ namespace WakeOnLan
             }
             foreach (var h in _headers) h.Invalidate();
             SetMessage("Büro-Laptop: 2 Weckpakete gesendet (2 Netzwerkkarten) · Port 445 angestoßen", Ui.Green);
+        }
+
+        /// <summary>
+        /// Screenshots: eine Ansicht im Hauptfenster öffnen, so wie man sie im Programm sieht
+        /// ("geraet" = Gerät bearbeiten, "zeitplaene", "handy"; alles andere = Geräteliste).
+        /// </summary>
+        internal void DemoShowView(string what, string deviceName)
+        {
+            switch (what)
+            {
+                case "geraet":
+                    var d = _store.Find(deviceName) ?? _store.Devices.FirstOrDefault();
+                    if (d != null) EditInView(d, false, x => { });
+                    break;
+                case "zeitplaene": ShowSchedules(); break;
+                case "handy": OpenRemoteSettings(); break;
+                default: CloseView(); break;
+            }
+        }
+
+        /// <summary>
+        /// Screenshots: Fenster so hoch machen, dass die Ansicht ohne Scrollen passt (höchstens maxHeight).
+        /// Rückgabe: true, wenn die Höhe geändert wurde.
+        /// </summary>
+        internal bool DemoFitView(int maxHeight)
+        {
+            var f = _view;
+            if (f == null || !f.AutoScroll) return false;
+            int missing = f.DisplayRectangle.Height - f.ClientSize.Height;
+            int height = Math.Min(maxHeight, Height + Math.Max(0, missing));
+            if (height == Height) return false;
+            Height = height;
+            return true;
         }
 
         /// <summary>Kontextmenü eines Geräts für die Screenshots (nicht angezeigt).</summary>
@@ -2312,7 +2350,9 @@ namespace WakeOnLan
             return "seit " + t.ToString("dd.MM.yyyy");
         }
 
-        private string Details()
+        private const string DetailGap = "  ·  ";
+
+        private List<string> Details()
         {
             var parts = new List<string>();
             var d = Device;
@@ -2321,7 +2361,7 @@ namespace WakeOnLan
             else if (d.AutoIp) parts.Add(d.LastIp.Length > 0 ? d.LastIp + " (automatisch)" : "IP automatisch");
             if (d.UsePort) parts.Add("Port " + d.Port);
             if (d.UseIpmi) parts.Add("IPMI " + d.IpmiHost);
-            return string.Join("  ·  ", parts);
+            return parts;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -2391,10 +2431,20 @@ namespace WakeOnLan
                 int nameMax = Math.Max(0, textRight - x);
                 TextRenderer.DrawText(g, Device.Name, fName, new Rectangle(x, nameTop, nameMax, nameSize.Height), Ui.Text, flags);
 
-                // Details (MAC, IP, Port, IPMI) grau dahinter, bei Platzmangel mit "…"
+                // Details (MAC, IP, Port, IPMI) grau dahinter. Bei Platzmangel fallen ganze Angaben von hinten weg
+                // (kein abgeschnittenes "Po…"); alle stehen im Tooltip. Nur eine einzelne zu lange Angabe bekommt "…".
                 int dx = x + Math.Min(nameW, nameMax) + (int)(16 * k);
                 if (dx < textRight)
-                    TextRenderer.DrawText(g, Details(), fSmall, new Rectangle(dx, smallTop, textRight - dx, smallSize.Height), Ui.Muted, flags);
+                {
+                    var parts = Details();
+                    string shown = string.Join(DetailGap, parts);
+                    while (parts.Count > 1 && TextRenderer.MeasureText(g, shown, fSmall, Size.Empty, measure).Width > textRight - dx)
+                    {
+                        parts.RemoveAt(parts.Count - 1);
+                        shown = string.Join(DetailGap, parts);
+                    }
+                    TextRenderer.DrawText(g, shown, fSmall, new Rectangle(dx, smallTop, textRight - dx, smallSize.Height), Ui.Muted, flags);
+                }
                 if (status.Length > 0)
                     TextRenderer.DrawText(g, status, fSmall, new Rectangle(statusX, smallTop, StatusWidth, smallSize.Height), statusColor, flags);
             }
@@ -2411,6 +2461,7 @@ namespace WakeOnLan
 
             // Tooltip mit Einzelheiten
             string tip = Device.Name;
+            foreach (string part in Details()) tip += "\r\n" + part;
             if (StateInfo.Length > 0) tip += "\r\nStatus: " + StateInfo;
             if (Device.LastOnline.HasValue) tip += "\r\nZuletzt online: " + Device.LastOnline.Value.ToString("dd.MM.yyyy HH:mm") + " (" + Ago(Device.LastOnline.Value) + ")";
             if (Device.HasStatusTarget)

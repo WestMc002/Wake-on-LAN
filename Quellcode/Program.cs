@@ -153,10 +153,17 @@ namespace WakeOnLan
             "  \"Wake on LAN.exe\" <Gerät> [...]    Geräte wecken (Name wie in der Liste)\r\n" +
             "  \"Wake on LAN.exe\" /alle            alle Geräte von „Alle wecken“\r\n" +
             "  \"Wake on LAN.exe\" \"/gruppe:<Name>\"  alle Geräte einer Gruppe\r\n" +
+            "  \"Wake on LAN.exe\" /herunterfahren <Gerät> bzw. \"/gruppe:<Name>\"\r\n" +
+            "                                     herunterfahren statt wecken, ohne Rückfrage\r\n" +
             "  \"Wake on LAN.exe\" /hintergrund     nur im Infobereich starten (Steuerung per Handy)\r\n\r\n" +
             "Beim Wecken über die Kommandozeile öffnet sich kein Fenster. Eine Windows-\r\n" +
             "Benachrichtigung meldet, wenn die Geräte online sind (abschaltbar im Fenster\r\n" +
             "unter „Einstellungen“). Exit-Code: 0 = in Ordnung, 1 = Fehler.";
+
+        private static bool IsShutdownSwitch(string a)
+        {
+            return a.Equals(Schedules.ShutdownSwitch, StringComparison.OrdinalIgnoreCase) || a.Equals("--herunterfahren", StringComparison.OrdinalIgnoreCase);
+        }
 
         public static int Run(DeviceStore store, string[] args)
         {
@@ -174,8 +181,16 @@ namespace WakeOnLan
 
             var devices = new List<Device>();
             var errors = new List<string>();
+            // "/herunterfahren" (auch aus Zeitplänen): die genannten Geräte bzw. Gruppen herunterfahren statt wecken
+            bool shutdown = args.Any(IsShutdownSwitch);
             foreach (string a in args)
             {
+                if (IsShutdownSwitch(a)) continue;
+                if (shutdown && a.TrimStart('-', '/').Equals("alle", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add("Herunterfahren geht nur für einzelne Geräte oder Gruppen, nicht mit /alle");
+                    continue;
+                }
                 if (a.Equals("/alle", StringComparison.OrdinalIgnoreCase) || a.Equals("--alle", StringComparison.OrdinalIgnoreCase) || a.Equals("-alle", StringComparison.OrdinalIgnoreCase))
                 {
                     foreach (var d in store.Devices.Where(x => x.InAll)) if (!devices.Contains(d)) devices.Add(d);
@@ -194,6 +209,16 @@ namespace WakeOnLan
                 else if (!devices.Contains(dev)) devices.Add(dev);
             }
 
+            if (shutdown)
+            {
+                // Geräte ohne eingerichtetes Herunterfahren auslassen und melden
+                foreach (var d in devices.Where(x => !x.AllowShutdown && !x.UseIpmi).ToList())
+                {
+                    devices.Remove(d);
+                    errors.Add(d.Name + ": Herunterfahren ist nicht eingerichtet");
+                }
+            }
+
             // alle gleichzeitig wecken (Anstoßen und IPMI warten auf Antworten)
             var results = new WakeResult[devices.Count];
             var threads = new List<Thread>();
@@ -202,7 +227,12 @@ namespace WakeOnLan
                 int n = i;
                 var t = new Thread(() =>
                 {
-                    try { results[n] = Waker.Wake(devices[n].Clone()); }
+                    try
+                    {
+                        var copy = devices[n].Clone();
+                        // wie "Gruppe herunterfahren" im Fenster: IPMI-Geräte über IPMI, die anderen über Windows
+                        results[n] = !shutdown ? Waker.Wake(copy) : copy.UseIpmi ? Waker.ShutdownIpmi(copy) : Waker.ShutdownWindows(copy, false);
+                    }
                     catch (Exception ex) { results[n] = new WakeResult(); results[n].Fail(ex.Message); }
                 }) { IsBackground = true };
                 threads.Add(t);
@@ -213,7 +243,7 @@ namespace WakeOnLan
             for (int i = 0; i < devices.Count; i++)
             {
                 if (results[i].FoundIp != null && results[i].FoundIp != devices[i].LastIp) { devices[i].LastIp = results[i].FoundIp; changed = true; }
-                History.Add(devices[i].Name, (results[i].Ok ? "geweckt: " : "Fehler beim Wecken: ") + results[i].Message + " (Kommandozeile)");
+                History.Add(devices[i].Name, (shutdown ? (results[i].Ok ? "" : "Fehler: ") : results[i].Ok ? "geweckt: " : "Fehler beim Wecken: ") + results[i].Message + " (Kommandozeile)");
                 if (!results[i].Ok) errors.Add(devices[i].Name + ": " + results[i].Message);
             }
             if (changed) { try { store.Save(); } catch { } }
@@ -224,10 +254,11 @@ namespace WakeOnLan
             // Benachrichtigungen: Fehler sofort, danach warten, bis die Geräte online sind (höchstens 3 Minuten)
             var waitFor = new List<Device>();
             for (int i = 0; i < devices.Count; i++)
-                if (results[i].Ok && devices[i].HasStatusTarget) waitFor.Add(devices[i]);
+                if (!shutdown && results[i].Ok && devices[i].HasStatusTarget) waitFor.Add(devices[i]);
             if (!store.Notify && errors.Count == 0) return 0;
             if (!store.Notify) waitFor.Clear();
-            using (var waiter = new CliWaiter(store, waitFor, errors, devices.Count))
+            string doneText = !shutdown ? null : devices.Count == 1 ? devices[0].Name + " fährt herunter." : devices.Count + " Geräte fahren herunter.";
+            using (var waiter = new CliWaiter(store, waitFor, errors, devices.Count, doneText))
                 Application.Run(waiter);
             return errors.Count == 0 ? 0 : 1;
         }
@@ -249,7 +280,7 @@ namespace WakeOnLan
         private bool _changed;
         private int _ticks;
 
-        public CliWaiter(DeviceStore store, List<Device> waitFor, List<string> errors, int total)
+        public CliWaiter(DeviceStore store, List<Device> waitFor, List<string> errors, int total, string doneText = null)
         {
             _store = store;
             _pending = new List<Device>(waitFor);
@@ -258,7 +289,7 @@ namespace WakeOnLan
             else if (_pending.Count > 0)
                 _notifier.Show(Ui.AppName, _pending.Count == 1 ? "Wecke " + _pending[0].Name + " …" : "Wecke " + total + " Geräte …", ToolTipIcon.Info);
             else
-                _notifier.Show(Ui.AppName, total == 1 ? "Gerät geweckt." : total + " Geräte geweckt.", ToolTipIcon.Info);
+                _notifier.Show(Ui.AppName, doneText ?? (total == 1 ? "Gerät geweckt." : total + " Geräte geweckt."), ToolTipIcon.Info);
             _notifier.Clicked += (s, e) => OpenWindow();
             _timer.Tick += (s, e) => Tick();
             _timer.Start();

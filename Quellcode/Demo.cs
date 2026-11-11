@@ -98,14 +98,38 @@ namespace WakeOnLan
                                     Pump(200);
                                 }
                             }
+
+                            // Die Ansichten so, wie man sie im Programm sieht: im Hauptfenster mit Navigation links.
+                            // Breite Ansichten (drei Spalten) bekommen ein breiteres Fenster; reicht die Höhe nicht,
+                            // wächst das Fenster, soweit der Bildschirm reicht.
+                            int edge = Margin(main);
+                            int maxW = area.Width - 2 * edge, maxH = area.Height - 2 * edge;
+                            foreach (var view in new[] {
+                                new { Name = "zeitplaene", File = "zeitplaene", Width = 1260 },
+                                new { Name = "geraet", File = "geraet", Width = 1560 },
+                                new { Name = "handy", File = "handy", Width = 1900 } })
+                            {
+                                main.DemoShowView("", null);
+                                main.Size = new Size(Math.Min(maxW, S(main, view.Width)), Math.Min(maxH, S(main, 800)));
+                                main.Location = new Point(area.Left + (area.Width - main.Width) / 2, area.Top + (area.Height - main.Height) / 2);
+                                Pump(200);
+                                main.DemoShowView(view.Name, edit != null ? edit.Name : null);
+                                Pump(1200); // Aufbau, Symbole, QR-Code
+                                if (main.DemoFitView(maxH))
+                                {
+                                    main.Location = new Point(main.Left, area.Top + (area.Height - main.Height) / 2);
+                                    Pump(600);
+                                }
+                                Cursor.Position = new Point(area.Right - 2, area.Bottom - 2);
+                                Pump(200);
+                                Save(Capture(backdrop, main.Handle, FrameBounds(main), edge), Path.Combine(outDir, view.File + "-" + suffix + ".png"));
+                            }
+                            main.DemoShowView("", null);
                             main.Close();
                         }
                         Pump(300);
 
-                        Shot(backdrop, () => new DeviceForm(edit, store, false) { StartPosition = FormStartPosition.CenterScreen }, Path.Combine(outDir, "geraet-" + suffix + ".png"));
-                        Shot(backdrop, () => new ScheduleForm(store) { StartPosition = FormStartPosition.CenterScreen }, Path.Combine(outDir, "zeitplaene-" + suffix + ".png"));
                         Shot(backdrop, () => new AboutDialog(null), Path.Combine(outDir, "info-" + suffix + ".png"));
-                        Shot(backdrop, () => new RemoteForm(store, true, true, null) { StartPosition = FormStartPosition.CenterScreen }, Path.Combine(outDir, "handy-" + suffix + ".png"));
                     }
                 }
                 return true;

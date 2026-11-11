@@ -27,7 +27,7 @@ namespace WakeOnLan
 
         private ModernCheck _enabled, _background, _autostart, _https, _internet;
         private ModernTextBox _port, _address, _cert, _key, _certPassword, _certName;
-        private ModernButton _setPin, _logoutAll, _checkCert, _copy, _firewallButton;
+        private ModernButton _setPin, _logoutAll, _checkCert, _copy, _firewallButton, _test;
         private ModernPill _srcFile, _srcStore;
         private readonly List<Control> _fileFields = new List<Control>();
         private readonly List<Control> _storeFields = new List<Control>();
@@ -42,7 +42,7 @@ namespace WakeOnLan
         public Action<Action<Tuple<bool, string, string>>> Saved;
         private string _pairCode;
         private readonly System.Windows.Forms.Timer _qrTimer;
-        private Label _pinHint, _certStatus, _url, _firewall, _serverStatus, _error;
+        private Label _pinHint, _certStatus, _url, _firewall, _serverStatus, _testResult, _error;
         private QrBox _qr;
         private readonly List<Control> _remoteFields = new List<Control>();
         private readonly List<Control> _httpsFields = new List<Control>();
@@ -166,17 +166,23 @@ namespace WakeOnLan
             _steps = HintLabel(_cOpen, "1. QR-Code mit der Handy-Kamera scannen (Handy im WLAN, per VPN oder – wenn eingeschaltet – aus dem Internet).\n" +
                 "2. Das Handy ist sofort angemeldet und bleibt es. Ohne Kamera: Link öffnen und Passwort eingeben.\n" +
                 "3. Im Browsermenü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“ – Wake on LAN öffnet sich dann wie eine App (ohne Browserleiste nur mit HTTPS).");
-            _lStatus = Heading(_cOpen, "Status");
-            _serverStatus = HintLabel(_cOpen, "");
+            // eigene Karte, damit bei drei Spalten keine Spalte viel höher wird als die anderen
+            _cStatus = NewCard("Status");
+            _serverStatus = HintLabel(_cStatus, "");
             ShowServerStatus(demo || running, runError);
-            _lFirewall = Heading(_cOpen, "Windows-Firewall");
-            _firewall = HintLabel(_cOpen, "");
+            _test = new ModernButton("Verbindung testen", MenuHelper.Link, false, k) { HeightUnits = 32, Margin = Padding.Empty };
+            _test.UpdateSize();
+            _test.Click += (s, e) => TestConnection();
+            _cStatus.Controls.Add(_test);
+            _testResult = HintLabel(_cStatus, "");
+            _lFirewall = Heading(_cStatus, "Windows-Firewall");
+            _firewall = HintLabel(_cStatus, "");
             _firewallButton = new ModernButton("Freigeben …", MenuHelper.Shield, false, k) { HeightUnits = 32, Margin = Padding.Empty };
             _firewallButton.UpdateSize();
             _firewallButton.Click += (s, e) => AllowFirewall();
-            _cOpen.Controls.Add(_firewallButton);
+            _cStatus.Controls.Add(_firewallButton);
 
-            foreach (var c in new Control[] { _cBasic, _cBack, _cTls, _cNet, _cOpen }) Controls.Add(c);
+            foreach (var c in new Control[] { _cBasic, _cBack, _cTls, _cNet, _cOpen, _cStatus }) Controls.Add(c);
 
             // ---------- Knöpfe ----------
             var cancel = _cancel = new ModernButton("Abbrechen", '\0', false, k) { DialogResult = DialogResult.Cancel, Margin = Padding.Empty };
@@ -189,7 +195,7 @@ namespace WakeOnLan
             AcceptButton = save;
             CancelButton = cancel;
             // Hinweistexte ändern ihre Höhe: neu anordnen
-            foreach (var l in new[] { _pinHint, _certStatus, _serverStatus, _firewall }) l.TextChanged += (s, e) => Relayout();
+            foreach (var l in new[] { _pinHint, _certStatus, _serverStatus, _testResult, _firewall }) l.TextChanged += (s, e) => Relayout();
             Arrange(S(1100)); // als eigenes Fenster: zwei Spalten
 
             _enabled.CheckedChanged += (s, e) => UpdateState();
@@ -200,8 +206,8 @@ namespace WakeOnLan
                 if (_https.Checked && HasCertInput()) CheckCertificate();
             };
             _internet.CheckedChanged += (s, e) => UpdateState();
-            _port.Box.TextChanged += (s, e) => { UpdateUrl(); CheckFirewall(); };
-            _address.Box.TextChanged += (s, e) => UpdateUrl();
+            _port.Box.TextChanged += (s, e) => { UpdateUrl(); CheckFirewall(); _testResult.Text = ""; };
+            _address.Box.TextChanged += (s, e) => { UpdateUrl(); _testResult.Text = ""; };
             _cert.Box.TextChanged += (s, e) => _certStatus.Text = "";
             _certName.Box.TextChanged += (s, e) => _certStatus.Text = "";
             _qrTimer = new System.Windows.Forms.Timer { Interval = 9 * 60 * 1000 }; // vor Ablauf des 10-Minuten-Codes erneuern
@@ -217,6 +223,8 @@ namespace WakeOnLan
                 _certStatus.ForeColor = Ui.Green;
                 _firewall.Text = "Port " + _r.Port + " ist freigegeben.";
                 _firewall.ForeColor = Ui.Green;
+                _testResult.Text = "Die Seite antwortet unter " + CurrentUrl() + " – Zertifikat in Ordnung. Zuletzt verbunden: 192.168.1.57 (vor 3 Min.).";
+                _testResult.ForeColor = Ui.Green;
                 _firewallButton.Enabled = false;
             }
             else
@@ -237,10 +245,10 @@ namespace WakeOnLan
 
         // ================================================================== Aufbau (wie Gerät bearbeiten)
 
-        private CardPanel _cBasic, _cBack, _cTls, _cNet, _cOpen;
+        private CardPanel _cBasic, _cBack, _cTls, _cNet, _cOpen, _cStatus;
         private ModernButton _save, _cancel, _browseCert, _browseKey;
         private Label _lPort, _lAddress, _addressHint, _lPass, _lCert, _lKey, _lCertPassword, _lCertName, _storeHint, _netHint,
-            _qrHint, _steps, _lStatus, _lFirewall;
+            _qrHint, _steps, _lFirewall;
         private readonly List<RowRef> _rows = new List<RowRef>();
         private int _lastWidth;
         private bool _arranging;
@@ -320,7 +328,7 @@ namespace WakeOnLan
         }
 
         /// <summary>
-        /// Zwei Spalten ab 900 Breite (links 58 %: Steuerung, Im Hintergrund, HTTPS, Internet; rechts "Auf dem Handy öffnen",
+        /// Im Hauptfenster ab 1380 Breite drei Spalten. Zwei Spalten ab 900 Breite (links 58 %: Steuerung, Im Hintergrund, HTTPS, Internet; rechts "Auf dem Handy öffnen",
         /// unten bündig mit links), sonst alles untereinander. Speichern/Abbrechen rechts darunter.
         /// </summary>
         protected override void OnLoad(EventArgs e)
@@ -339,7 +347,7 @@ namespace WakeOnLan
 
         public void Arrange(int width)
         {
-            if (_cOpen == null || _arranging) return;
+            if (_cStatus == null || _arranging) return;
             _arranging = true;
             try
             {
@@ -353,12 +361,31 @@ namespace WakeOnLan
                 if (embedded && IsHandleCreated) SendMessage(Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
                 SuspendLayout();
                 int pad = S(24), gap = S(16);
-                int W = Math.Max(S(420), Math.Min(width - 2 * pad, S(1200)));
+                // im Hauptfenster ab 1380 Breite drei Spalten (bis 1800), sonst höchstens 1200 breit
+                bool three = embedded && width - 2 * pad >= S(1380);
+                int W = Math.Max(S(420), Math.Min(width - 2 * pad, three ? S(1800) : S(1200)));
                 bool two = W >= S(900);
                 int leftW = two ? (W - gap) * 58 / 100 : W;
                 int rightW = two ? W - gap - leftW : W;
                 int y = pad, bottom;
-                if (two)
+                if (three)
+                {
+                    // 1: Steuerung, Internet · 2: HTTPS, Status · 3: Auf dem Handy öffnen, Im Hintergrund –
+                    // die jeweils untere Karte reicht bis zur Unterkante der höchsten Spalte
+                    int cw = (W - 2 * gap) / 3, cw3 = W - 2 * gap - 2 * cw;
+                    int hBasic = LayoutBasic(cw), hNet = LayoutNet(cw), hTls = LayoutTls(cw), hStatus = LayoutStatus(cw);
+                    int hOpen = LayoutOpen(cw3), hBack = LayoutBack(cw3);
+                    int total = Math.Max(Math.Max(hBasic + gap + hNet, hTls + gap + hStatus), hOpen + gap + hBack);
+                    int x2 = pad + cw + gap, x3 = x2 + cw + gap;
+                    _cBasic.SetBounds(pad, y, cw, hBasic);
+                    _cNet.SetBounds(pad, y + hBasic + gap, cw, total - hBasic - gap);
+                    _cTls.SetBounds(x2, y, cw, hTls);
+                    _cStatus.SetBounds(x2, y + hTls + gap, cw, total - hTls - gap);
+                    _cOpen.SetBounds(x3, y, cw3, hOpen);
+                    _cBack.SetBounds(x3, y + hOpen + gap, cw3, total - hOpen - gap);
+                    bottom = y + total;
+                }
+                else if (two)
                 {
                     // links Steuerung, HTTPS, Internet; rechts "Auf dem Handy öffnen" und "Im Hintergrund" –
                     // so sind beide Spalten etwa gleich hoch und das Fenster passt auf den Bildschirm
@@ -371,18 +398,20 @@ namespace WakeOnLan
                     }
                     ly -= gap;
                     int rx = pad + leftW + gap;
-                    int openH = LayoutOpen(rightW), backH = LayoutBack(rightW);
+                    int openH = LayoutOpen(rightW), statusH = LayoutStatus(rightW), backH = LayoutBack(rightW);
                     _cOpen.SetBounds(rx, y, rightW, openH);
-                    int ry = y + openH + gap;
+                    _cStatus.SetBounds(rx, y + openH + gap, rightW, statusH);
+                    int ry = _cStatus.Bottom + gap;
                     _cBack.SetBounds(rx, ry, rightW, Math.Max(backH, ly - ry)); // unten bündig mit links
                     bottom = Math.Max(ly, _cBack.Bottom);
                 }
                 else
                 {
                     int ly = y;
-                    foreach (var c in new CardPanel[] { _cBasic, _cBack, _cTls, _cNet, _cOpen })
+                    foreach (var c in new CardPanel[] { _cBasic, _cBack, _cTls, _cNet, _cOpen, _cStatus })
                     {
-                        int h = c == _cBasic ? LayoutBasic(W) : c == _cBack ? LayoutBack(W) : c == _cTls ? LayoutTls(W) : c == _cNet ? LayoutNet(W) : LayoutOpen(W);
+                        int h = c == _cBasic ? LayoutBasic(W) : c == _cBack ? LayoutBack(W) : c == _cTls ? LayoutTls(W) : c == _cNet ? LayoutNet(W)
+                            : c == _cOpen ? LayoutOpen(W) : LayoutStatus(W);
                         c.SetBounds(pad, ly, W, h);
                         ly += h + gap;
                     }
@@ -554,9 +583,19 @@ namespace WakeOnLan
             y += _copy.Height + S(12);
             y = PlaceHint(_qrHint, p, y, w);
             y = PlaceHint(_steps, p, y, w);
-            _lStatus.SetBounds(p, y, w, S(22));
-            y += S(24);
+            return y + S(6);
+        }
+
+        /// <summary>Karte "Status": läuft die Seite, Verbindung testen, Windows-Firewall.</summary>
+        private int LayoutStatus(int W)
+        {
+            int p = S(20), w = W - 2 * p;
+            int y = S(48);
             y = PlaceHint(_serverStatus, p, y, w);
+            _test.Location = new Point(p, y);
+            y += _test.Height + S(10);
+            y = PlaceHint(_testResult, p, y, w);
+            y += S(4);
             _lFirewall.SetBounds(p, y, w, S(22));
             y += S(24);
             y = PlaceHint(_firewall, p, y, w);
@@ -598,6 +637,7 @@ namespace WakeOnLan
             _internet.Enabled = on && _https.Checked;
             _qr.Enabled = on;
             _copy.Enabled = on;
+            _test.Enabled = on && !_testing;
             UpdatePinHint();
             UpdateUrl();
         }
@@ -806,6 +846,68 @@ namespace WakeOnLan
             });
         }
 
+        private bool _testing;
+
+        /// <summary>
+        /// "Verbindung testen": die laufende Seite über die eingetragene Adresse aufrufen. Vom PC selbst aus beweist das nur,
+        /// dass Adresse, Server und Zertifikat stimmen – ob die Firewall andere Geräte durchlässt, zeigt der letzte Zugriff
+        /// eines Handys (WebServer.LastClient) oder ein Umweg über den Router (Adresse zeigt nicht auf diesen PC).
+        /// </summary>
+        private void TestConnection()
+        {
+            if (_demo || _testing) return;
+            string address = _address.Text.Trim().Length > 0 ? _address.Text.Trim() : DefaultAddress();
+            if (!_running || !_r.Enabled || PortValue() != _r.Port || _https.Checked != _r.Https)
+            {
+                _testResult.ForeColor = Ui.Yellow;
+                _testResult.Text = _running && _r.Enabled ? "Bitte zuerst speichern – getestet wird die laufende Seite mit den gespeicherten Einstellungen."
+                    : "Die Seite läuft nicht – bitte zuerst einschalten und speichern.";
+                return;
+            }
+            string url = CurrentUrl();
+            int port = _r.Port;
+            bool https = _r.Https;
+            _testing = true;
+            _test.Enabled = false;
+            _testResult.ForeColor = Ui.Muted;
+            _testResult.Text = "Teste " + url + " …";
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                ConnectionTest.Result r;
+                try { r = ConnectionTest.Run(address, port, https); }
+                catch (Exception ex) { r = new ConnectionTest.Result { Error = ex.Message }; }
+                if (IsDisposed || !IsHandleCreated) return;
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        _testing = false;
+                        _test.Enabled = _enabled.Checked;
+                        if (!r.Ok)
+                        {
+                            _testResult.ForeColor = Ui.Red;
+                            _testResult.Text = r.Error;
+                            return;
+                        }
+                        string text = "Die Seite antwortet unter " + url +
+                            (!https ? "." : r.CertProblem == null ? " – Zertifikat in Ordnung." : " – aber " + r.CertProblem + ".");
+                        DateTime when;
+                        string client = WebServer.LastClient(out when);
+                        bool proven = client != null || !r.Own;
+                        if (client != null)
+                            text += " Zuletzt verbunden: " + client + " (" + DeviceRow.Ago(when) + ") – andere Geräte kommen durch die Firewall.";
+                        else if (!r.Own)
+                            text += " Die Adresse führt über den Router zurück zu diesem PC – Weiterleitung und Firewall lassen die Verbindung durch.";
+                        else
+                            text += " Dieser Test läuft auf dem PC selbst und geht nicht durch die Firewall. Ob andere Geräte durchkommen, steht hier, sobald sich ein Handy verbunden hat – dann noch einmal testen.";
+                        _testResult.ForeColor = r.CertProblem != null ? Ui.Yellow : proven ? Ui.Green : Ui.Text;
+                        _testResult.Text = text;
+                    }));
+                }
+                catch (InvalidOperationException) { }
+            });
+        }
+
         private void AllowFirewall()
         {
             int port = PortValue();
@@ -926,6 +1028,7 @@ namespace WakeOnLan
             _logout = false;
             _pairCode = null;
             _certPassword.Text = "";
+            _testResult.Text = "";
             ShowServerStatus(_running, result.Item2);
             UpdateState();
             UpdateUrl();

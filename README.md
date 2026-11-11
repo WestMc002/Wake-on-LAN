@@ -33,8 +33,8 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 - **„Alle wecken“** – Schalter direkt in jeder Gerätezeile, der Knopf zeigt die Anzahl
 - **Herunterfahren und Neustart** – Windows-PCs (optional mit hinterlegtem Benutzer und Kennwort) bzw. Server sanft über IPMI
 - **Steuerung per Handy** – die Geräteliste als Webseite für Handy und Tablet (keine App nötig): Anmeldung per QR-Code ohne Passwort (Einmal-Code) oder mit Passwort, als App auf dem Startbildschirm; optional verschlüsselt mit eigenem Zertifikat (Datei oder Windows-Zertifikatspeicher, z. B. Let's Encrypt, Erneuerung wird automatisch übernommen) und optional per Portfreigabe aus dem Internet erreichbar (mit Sperre nach falschen Passwörtern). Läuft dazu im Infobereich weiter und startet auf Wunsch mit Windows
-- **Zeitpläne** – z. B. „Server Mo–Fr um 07:00 wecken“, über die Windows-Aufgabenplanung
-- **Sprungliste und Kommandozeile** – Alle wecken, Gruppen und Geräte direkt aus der Taskleiste; `"Wake on LAN.exe" Büro-PC`, `/alle`, `"/gruppe:Server"`; Desktop-Verknüpfungen auf Knopfdruck
+- **Zeitpläne** – z. B. „Server Mo–Fr um 07:00 wecken und um 19:00 herunterfahren“, über die Windows-Aufgabenplanung
+- **Sprungliste und Kommandozeile** – Alle wecken, Gruppen und Geräte direkt aus der Taskleiste; `"Wake on LAN.exe" Büro-PC`, `/alle`, `"/gruppe:Server"`, `/herunterfahren Büro-PC`; Desktop-Verknüpfungen auf Knopfdruck
 - **Benachrichtigungen** – Windows-Meldung, sobald das geweckte Gerät online ist
 - **Suche, Verlauf, Export/Import** – Suche nach Name, IP, MAC oder Gruppe; Verlauf aller Aktionen; Geräteliste als XML sichern und übertragen
 - **Netzwerksuche** – „Gerät hinzufügen“ › „Im Netzwerk suchen“ findet eingeschaltete Geräte im eigenen Netz (per ARP, mit IP, MAC und Rechnername) und übernimmt sie mit einem Klick
