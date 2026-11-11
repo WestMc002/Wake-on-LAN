@@ -13,8 +13,14 @@ using System.Windows.Forms;
 namespace WakeOnLan
 {
     /// <summary>Dialog "Gerät bearbeiten" in drei Spalten: Allgemein und Status | Weckpaket | IPMI und Anstoßen.</summary>
-    internal sealed class DeviceForm : FixedForm, IViewLayout
+    internal sealed class DeviceForm : FixedForm, IViewLayout, IHasChanges
     {
+
+        // ---------- Rückfrage bei ungespeicherten Änderungen ----------
+        private string _baseline;
+        private string State() { return ChangeTracker.Snapshot(this, _mode); }
+        public bool HasChanges { get { return _baseline != null && State() != _baseline; } }
+        public void ResetChanges() { _baseline = State(); }
         // Karten und Knöpfe für die Anordnung nach Breite (1–3 Spalten, als Ansicht im Hauptfenster)
         private CardPanel _cGeneral, _cStatus, _cMagic, _cIpmi, _cPort;
         private readonly Dictionary<CardPanel, int> _natural = new Dictionary<CardPanel, int>();

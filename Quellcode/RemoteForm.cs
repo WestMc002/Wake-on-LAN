@@ -18,8 +18,14 @@ namespace WakeOnLan
     /// <summary>
     /// Dialog in zwei Spalten: links Grundeinstellungen und HTTPS, rechts QR-Code mit Adresse, Firewall und Kurzanleitung.
     /// </summary>
-    internal sealed class RemoteForm : FixedForm, IViewLayout
+    internal sealed class RemoteForm : FixedForm, IViewLayout, IHasChanges
     {
+
+        // ---------- Rückfrage bei ungespeicherten Änderungen ----------
+        private string _baseline;
+        private string State() { return ChangeTracker.Snapshot(this, _newPin != null, _logout); }
+        public bool HasChanges { get { return _baseline != null && State() != _baseline; } }
+        public void ResetChanges() { _baseline = State(); }
         private readonly float k;
         private readonly DeviceStore _store;
         private RemoteSettings _r;
@@ -1032,6 +1038,7 @@ namespace WakeOnLan
             ShowServerStatus(_running, result.Item2);
             UpdateState();
             UpdateUrl();
+            ResetChanges(); // gespeicherter Stand ist der neue Ausgangspunkt
             _error.ForeColor = string.IsNullOrEmpty(result.Item2) ? Ui.Green : Ui.Red;
             _error.Text = string.IsNullOrEmpty(result.Item2) ? result.Item3 : "Gespeichert, aber nicht gestartet: " + result.Item2;
             var t = new System.Windows.Forms.Timer { Interval = 6000 };

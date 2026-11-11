@@ -537,8 +537,14 @@ namespace WakeOnLan
     }
 
     /// <summary>Neuer Zeitplan bzw. Zeitplan bearbeiten: Aktion (Wecken, Herunterfahren), Ziel (Alle, Gruppe, Gerät), Uhrzeit und Wochentage.</summary>
-    internal sealed class ScheduleEditForm : FixedForm, IViewLayout
+    internal sealed class ScheduleEditForm : FixedForm, IViewLayout, IHasChanges
     {
+
+        // ---------- Rückfrage bei ungespeicherten Änderungen ----------
+        private string _baseline;
+        private string State() { return ChangeTracker.Snapshot(this, _shutdown, _kind, _value); }
+        public bool HasChanges { get { return _baseline != null && State() != _baseline; } }
+        public void ResetChanges() { _baseline = State(); }
         private readonly float k;
         private readonly ModernButton _target;
         private readonly ModernPill _actWake, _actOff;

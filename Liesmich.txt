@@ -280,6 +280,9 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.62.2026.1111 Rückfrage "Änderungen verwerfen?", wenn Steuerung per Handy,
+                 Gerät bearbeiten oder Zeitplan bearbeiten mit ungespeicherten
+                 Änderungen verlassen bzw. das Fenster geschlossen wird
   1.61.2026.1111 Steuerung per Handy: eigene Karte "Status" (Verbindung testen,
                  Firewall), in breiten Fenstern drei Spalten; Tooltips: Rand
                  rechts so groß wie links; Screenshot "Steuerung per Handy"

@@ -169,7 +169,7 @@ namespace WakeOnLan
             _tip.SetToolTip(_navMenu, "Navigation aus- bzw. einklappen");
             _navPin = AddNav("", MenuHelper.Pin, () => SetNavPinned(!_store.NavPinned));
             _navPin.IconOnly = true;
-            _navDevices = AddNav("Geräte", MenuHelper.Devices, () => { CloseNav(); CloseView(); });
+            _navDevices = AddNav("Geräte", MenuHelper.Devices, () => { CloseNav(); if (ConfirmLeaveView()) CloseView(); });
             _navDevices.Selected = true;
             _navSchedules = AddNav("Zeitpläne", MenuHelper.Clock, ShowSchedules);
             _navHistory = AddNav("Verlauf", MenuHelper.History, () => ShowView(_navHistory, new HistoryForm(), null));
@@ -338,6 +338,7 @@ namespace WakeOnLan
             if (title == null) title = item.Text;
             CloseNav();
             if (_view != null && _viewTitle.Tag == item && _viewTitle.Text == title) { f.Dispose(); return; } // schon offen
+            if (!ConfirmLeaveView()) { f.Dispose(); return; } // ungespeicherte Änderungen: auf der Seite bleiben
             CloseView();
             if (!Visible) ShowFromTray();
 
@@ -394,6 +395,22 @@ namespace WakeOnLan
                 _viewResize(this, EventArgs.Empty);
             }
             f.Focus();
+            // Stand für die Rückfrage merken, wenn die Seite fertig aufgebaut ist
+            var tracked = f as IHasChanges;
+            if (tracked != null) BeginInvoke(new Action(() => { if (_view == f && !f.IsDisposed) tracked.ResetChanges(); }));
+        }
+
+        /// <summary>
+        /// Vor dem Verlassen einer Seite mit ungespeicherten Änderungen nachfragen (globale Vorgabe).
+        /// true = verlassen (keine Änderungen oder „Ja“), false = auf der Seite bleiben.
+        /// </summary>
+        private bool ConfirmLeaveView()
+        {
+            var tracked = _view as IHasChanges;
+            if (tracked == null || _view.IsDisposed || !tracked.HasChanges) return true;
+            if (!Visible) ShowFromTray();
+            return MessageBox.Show(this, "Die Änderungen auf der Seite „" + _viewTitle.Text + "“ sind noch nicht gespeichert.\r\n\r\nÄnderungen verwerfen?",
+                Ui.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
         }
 
         private static IEnumerable<Button> AllButtons(Control c)
@@ -691,6 +708,12 @@ namespace WakeOnLan
                 base.OnFormClosing(e);
                 return;
             }
+            if (!_exit && !_demo && e.CloseReason == CloseReason.UserClosing && !ConfirmLeaveView())
+            {
+                e.Cancel = true;
+                base.OnFormClosing(e);
+                return;
+            }
             _timer.Stop();
             if (_web != null) { _web.Dispose(); _web = null; }
             if (_pendingWeb != null) { _pendingWeb.Dispose(); _pendingWeb = null; }
@@ -728,6 +751,7 @@ namespace WakeOnLan
         private void ExitProgram()
         {
             if (FocusOpenDialog()) return;
+            if (!ConfirmLeaveView()) return;
             _exit = true;
             Close();
         }

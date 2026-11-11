@@ -129,6 +129,46 @@ namespace WakeOnLan
         void Arrange(int width);
     }
 
+    /// <summary>
+    /// Einstellungsseite mit „Speichern“/„Abbrechen“: merkt sich den Stand beim Öffnen bzw. nach dem Speichern,
+    /// damit das Hauptfenster vor dem Verlassen nachfragen kann (globale Vorgabe „Rückfrage bei ungespeicherten Änderungen“).
+    /// </summary>
+    internal interface IHasChanges
+    {
+        bool HasChanges { get; }
+        void ResetChanges();
+    }
+
+    /// <summary>Stand aller Eingaben einer Seite als Text (Felder, Schalter, Auswahl-Pillen, Auswahlknöpfe).</summary>
+    internal static class ChangeTracker
+    {
+        public static string Snapshot(Control root, params object[] extra)
+        {
+            var sb = new System.Text.StringBuilder();
+            Add(sb, root);
+            foreach (var x in extra) sb.Append('\u0001').Append(x == null ? "" : x.ToString());
+            return sb.ToString();
+        }
+
+        private static void Add(System.Text.StringBuilder sb, Control c)
+        {
+            foreach (Control child in c.Controls)
+            {
+                var box = child as ModernTextBox;
+                var check = child as ModernCheck;
+                var pill = child as ModernPill;
+                var toggle = child as ToggleSwitch;
+                var button = child as ModernButton;
+                if (box != null) { sb.Append("T:").Append(box.Text).Append('\u0001'); continue; }
+                if (check != null) sb.Append(check.Checked ? "1" : "0");
+                else if (pill != null) sb.Append(pill.Checked ? "1" : "0");
+                else if (toggle != null) sb.Append(toggle.Checked ? "1" : "0");
+                else if (button != null && button.DropDown) sb.Append("D:").Append(button.Text).Append('\u0001');
+                Add(sb, child);
+            }
+        }
+    }
+
     internal class FixedForm : Form
     {
         private const int WM_NCHITTEST = 0x0084, HTCLIENT = 1, HTLEFT = 10, HTBOTTOMRIGHT = 17;
