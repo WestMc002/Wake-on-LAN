@@ -171,7 +171,7 @@ namespace WakeOnLan
             own.Checked = current == null || !_ranges.Any(x => x.First == current.First && x.Last == current.Last);
             menu.Items.Add(own);
             menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
-            menu.Show(_rangeButton, new Point(0, _rangeButton.Height));
+            MenuHelper.ShowOnScreen(menu, _rangeButton, new Point(0, _rangeButton.Height));
         }
 
         /// <summary>Bereich aus Von/Bis (null, wenn eine Adresse ungültig ist).</summary>

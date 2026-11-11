@@ -401,6 +401,35 @@ namespace WakeOnLan
             }
         }
 
+        /// <summary>
+        /// Menü an einem Element öffnen, aber nur auf dem Bildschirm dieses Elements (globale Vorgabe): Windows verschiebt
+        /// Menüs am Rand nur innerhalb des ganzen Desktops, sonst ragen sie auf den Nachbarbildschirm.
+        /// location gilt relativ zu owner; AboveRight öffnet nach oben (Unterkante an location).
+        /// </summary>
+        public static void ShowOnScreen(ToolStripDropDown menu, Control owner, Point location,
+            ToolStripDropDownDirection direction = ToolStripDropDownDirection.Default)
+        {
+            var size = menu.GetPreferredSize(Size.Empty);
+            if (!menu.AutoSize || size.Width <= 0 || size.Height <= 0) size = menu.Size;
+            var ownerRect = owner.RectangleToScreen(owner.ClientRectangle);
+            var area = Screen.FromRectangle(ownerRect).WorkingArea;
+            var p = owner.PointToScreen(location);
+            bool up = direction == ToolStripDropDownDirection.AboveRight || direction == ToolStripDropDownDirection.AboveLeft;
+            bool left = direction == ToolStripDropDownDirection.AboveLeft || direction == ToolStripDropDownDirection.BelowLeft || direction == ToolStripDropDownDirection.Left;
+            int x = left ? p.X - size.Width : p.X;
+            int y = up ? p.Y - size.Height : p.Y;
+            // unten kein Platz: nach oben öffnen (bei Auswahlfeldern über dem Element statt darüber hinweg)
+            if (!up && y + size.Height > area.Bottom)
+                y = (location.Y >= owner.Height ? ownerRect.Top : p.Y) - size.Height;
+            // oben kein Platz: nach unten öffnen
+            if (up && y < area.Top) y = p.Y;
+            if (x + size.Width > area.Right) x = area.Right - size.Width;
+            if (x < area.Left) x = area.Left;
+            if (y + size.Height > area.Bottom) y = area.Bottom - size.Height;
+            if (y < area.Top) y = area.Top;
+            menu.Show(owner, owner.PointToClient(new Point(x, y)), ToolStripDropDownDirection.BelowRight);
+        }
+
         private static Bitmap _blank;
 
         /// <summary>Durchsichtiges Bild als Platzhalter für die Breite der Symbolspalte.</summary>

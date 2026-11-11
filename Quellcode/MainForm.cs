@@ -182,8 +182,10 @@ namespace WakeOnLan
                 var current = _viewTitle.Tag as NavButton ?? _navDevices; // aktuelle Ansicht
                 current.Selected = false;
                 _navMore.Selected = true; // ausgewählt, solange das Menü offen ist
+                _navMenuOpen = true; // solange das Menü offen ist, klappt die Navigation nicht ein
                 ShowMainMenu(_navMore, new Point(_navMore.Width + S(4), _navMore.Height), ToolStripDropDownDirection.AboveRight, () =>
                 {
+                    _navMenuOpen = false;
                     if (!_navMore.IsDisposed) _navMore.Selected = false;
                     if (!current.IsDisposed) current.Selected = _viewTitle.Tag == current || (current == _navDevices && _view == null);
                     if (_view == null && !_navDevices.IsDisposed) _navDevices.Selected = true;
@@ -196,10 +198,20 @@ namespace WakeOnLan
             _navTimer.Tick += (s, e) =>
             {
                 // ausgeklappt, nicht angepinnt: wieder einklappen, sobald die Maus die Navigation verlässt
-                if (!_navOpen || _store.NavPinned || _nav.Capture || !Visible) return;
+                if (!_navOpen || _store.NavPinned || _nav.Capture || _navMenuOpen || !Visible) return;
                 if (!_nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position)) { _navOpen = false; ApplyNav(); }
             };
             _navTimer.Start();
+            // nicht angepinnt: Verweilt die Maus ca. 400 ms auf der eingeklappten Navigation, klappt sie aus (wie ☰, über dem
+            // Inhalt); kurzes Überfahren löst nichts aus. Einklappen übernimmt _navTimer. Referenz: Dock Pilot.
+            _navHover.Tick += (s, e) =>
+            {
+                _navHover.Stop();
+                if (_store.NavPinned || _navOpen || !Visible || !OverNav()) return;
+                _navOpen = true;
+                ApplyNav();
+            };
+            HookNavHover(_nav);
             _footer = new SignatureFooter(k);
 
             // ---------- Update-Hinweis (wie Fensterpositionen) ----------
@@ -312,6 +324,18 @@ namespace WakeOnLan
         private int RightInset { get { return S(28) + SystemInformation.VerticalScrollBarWidth; } }
 
         // ================================================================== Navigation
+
+        private readonly System.Windows.Forms.Timer _navHover = new System.Windows.Forms.Timer { Interval = 400 };
+        private bool _navMenuOpen;
+
+        private bool OverNav() { return _nav.RectangleToScreen(_nav.ClientRectangle).Contains(Cursor.Position); }
+
+        private void HookNavHover(Control c)
+        {
+            c.MouseEnter += (s, e) => { if (!_store.NavPinned && !_navOpen && !_navHover.Enabled) _navHover.Start(); };
+            c.MouseLeave += (s, e) => { if (!OverNav()) _navHover.Stop(); }; // Wechsel zwischen den Einträgen zählt nicht als Verlassen
+            foreach (Control child in c.Controls) HookNavHover(child);
+        }
 
         private NavButton AddNav(string text, char glyph, Action click)
         {
@@ -1082,7 +1106,7 @@ namespace WakeOnLan
             menu.Items.Add(b.Item("Gerät eingeben …", MenuHelper.Edit, AddDevice));
             menu.Items.Add(b.Item("Im Netzwerk suchen …", MenuHelper.Search, AddFromScan));
             menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
-            menu.Show(button, new Point(0, button.Height));
+            MenuHelper.ShowOnScreen(menu, button, new Point(0, button.Height));
         }
 
         /// <summary>Geräte über die Netzwerksuche übernehmen: eines zum Bearbeiten, mehrere direkt (Name, IP, MAC).</summary>
@@ -1475,7 +1499,7 @@ namespace WakeOnLan
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(b.Item("Gruppe auflösen …", MenuHelper.Delete, () => DissolveGroup(g)));
             menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
-            menu.Show(header, location);
+            MenuHelper.ShowOnScreen(menu, header, location);
         }
 
         private void ImportScripts()
@@ -1526,7 +1550,7 @@ namespace WakeOnLan
         {
             var menu = BuildRowMenu(row);
             menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
-            menu.Show(row, location);
+            MenuHelper.ShowOnScreen(menu, row, location);
         }
 
         private ContextMenuStrip BuildRowMenu(DeviceRow row)
@@ -1957,7 +1981,7 @@ namespace WakeOnLan
                 if (closed != null) closed();
                 BeginInvoke(new Action(menu.Dispose));
             };
-            menu.Show(owner, location, direction);
+            MenuHelper.ShowOnScreen(menu, owner, location, direction);
         }
 
         /// <summary>Nach dem Verschieben des Programms: Zeitpläne mit altem Programmpfad still auf den neuen Pfad umstellen.</summary>

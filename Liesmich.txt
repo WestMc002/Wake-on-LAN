@@ -280,6 +280,9 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.63.2026.1111 Navigation klappt (nicht angepinnt) auch aus, wenn die Maus
+                 kurz darauf verweilt; Menüs bleiben bei mehreren
+                 Bildschirmen auf dem Bildschirm, auf dem sie geöffnet werden
   1.62.2026.1111 Rückfrage "Änderungen verwerfen?", wenn Steuerung per Handy,
                  Gerät bearbeiten oder Zeitplan bearbeiten mit ungespeicherten
                  Änderungen verlassen bzw. das Fenster geschlossen wird

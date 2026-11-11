@@ -374,7 +374,7 @@ namespace WakeOnLan
                 menu.Items.Add(item);
             }
             menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
-            menu.Show(_statusMode, new Point(0, _statusMode.Height));
+            MenuHelper.ShowOnScreen(menu, _statusMode, new Point(0, _statusMode.Height));
         }
 
         private void BrowseIpmiTool()

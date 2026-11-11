@@ -754,7 +754,7 @@ namespace WakeOnLan
                 return;
             }
             menu.Closed += (s, e) => BeginInvoke(new Action(menu.Dispose));
-            menu.Show(_target, new Point(0, _target.Height));
+            MenuHelper.ShowOnScreen(menu, _target, new Point(0, _target.Height));
         }
 
         private void Save()
