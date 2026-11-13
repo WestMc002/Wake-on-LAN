@@ -68,17 +68,32 @@ namespace WakeOnLan
             catch (WebException ex)
             {
                 var http = ex.Response as HttpWebResponse;
-                if (http != null && http.StatusCode == HttpStatusCode.NotFound) throw new Exception("Auf GitHub ist noch keine Version veröffentlicht.");
-                if (http != null && (int)http.StatusCode == 403) throw new Exception("GitHub hat die Anfrage abgelehnt (zu viele Anfragen). Später erneut versuchen.");
-                throw new Exception("GitHub nicht erreichbar: " + ex.Message);
+                if (http != null && http.StatusCode == HttpStatusCode.NotFound)
+                {
+                    // /releases/latest kennt nur fertige Versionen – kein Fehler
+                    var pre = new Exception("Nur Vorabversionen");
+                    pre.Data["Prerelease"] = true;
+                    throw pre;
+                }
+                string detail = ex.Message;
+                if (ex.InnerException != null && ex.InnerException.Message != ex.Message) detail += "\r\n" + ex.InnerException.Message;
+                if (http != null && (int)http.StatusCode == 403) throw Fail("Zu viele Anfragen.", detail);
+                if (ex.Status == WebExceptionStatus.NameResolutionFailure || ex.Status == WebExceptionStatus.ProxyNameResolutionFailure
+                    || ex.Status == WebExceptionStatus.ConnectFailure) throw Fail("Keine Verbindung.", detail);
+                if (ex.Status == WebExceptionStatus.Timeout) throw Fail("Keine Antwort.", detail);
+                throw Fail("Nicht erreichbar.", detail);
+            }
+            catch (IOException ex)
+            {
+                throw new Exception(ex.Message); // unbekannter Fehler: nur „Details“
             }
 
-            var obj = MiniJson.Parse(text) as Dictionary<string, object>;
-            if (obj == null) throw new Exception("Unerwartete Antwort von GitHub.");
-            string tag = obj.ContainsKey("tag_name") ? obj["tag_name"] as string : null;
-            if (string.IsNullOrEmpty(tag)) throw new Exception("Antwort von GitHub ohne Versionsnummer.");
-            string version = tag.TrimStart('v', 'V').Trim();
-            if (Parse(version) == null) throw new Exception("Unbekannte Versionsnummer: " + tag);
+            Dictionary<string, object> obj;
+            try { obj = MiniJson.Parse(text) as Dictionary<string, object>; }
+            catch { obj = null; }
+            string tag = obj != null && obj.ContainsKey("tag_name") ? obj["tag_name"] as string : null;
+            string version = (tag ?? "").TrimStart('v', 'V').Trim();
+            if (Parse(version) == null) throw Fail("Antwort unlesbar.", null); // ohne „Details“
 
             var info = new UpdateInfo { Version = version, Url = ReleasesPage };
             string url = obj.ContainsKey("html_url") ? obj["html_url"] as string : null;
@@ -100,6 +115,14 @@ namespace WakeOnLan
                 }
             info.Notes = ExtractNotes(obj.ContainsKey("body") ? obj["body"] as string : null);
             return info;
+        }
+
+        /// <summary>Feste Kurzmeldung mit technischem Originaltext für „Details“ (null = ohne „Details“).</summary>
+        private static Exception Fail(string message, string detail)
+        {
+            var ex = new Exception(message);
+            ex.Data["Detail"] = detail ?? "";
+            return ex;
         }
 
         /// <summary>true, wenn die Version neuer als die laufende ist.</summary>
@@ -247,7 +270,22 @@ Start-Process -FilePath $Exe -ArgumentList '--nach-update'
     {
         public readonly UpdateKind Kind;
         public readonly string Title, Detail;
+        /// <summary>Technischer Originaltext für „Details“ (leer = kein „Details“).</summary>
+        public string More = "";
         public UpdateStatus(UpdateKind kind, string title, string detail) { Kind = kind; Title = title; Detail = detail ?? ""; }
+
+        /// <summary>
+        /// Fehler der Prüfung als Stand: feste Kurzmeldung (Message) mit Originaltext in Data["Detail"];
+        /// unbekannte Fehler nur mit „Details“. „Nur Vorabversionen“ ist kein Fehler.
+        /// </summary>
+        public static UpdateStatus FromError(Exception ex)
+        {
+            if (ex.Data.Contains("Prerelease"))
+                return new UpdateStatus(UpdateKind.Unknown, "Nur Vorabversionen", "Noch keine fertige Version.");
+            if (ex.Data.Contains("Detail"))
+                return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", ex.Message) { More = ex.Data["Detail"] as string ?? "" };
+            return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", "") { More = ex.Message };
+        }
     }
 
     /// <summary>Verbindung des Info-Fensters zur Update-Prüfung im Hauptfenster (wie Fensterpositionen).</summary>

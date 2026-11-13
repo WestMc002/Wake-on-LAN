@@ -280,6 +280,10 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.64.2026.1113 Info-Fenster, Zeile "Updates" neu geordnet: Knopf neben beiden
+                 Zeilen, kurze Meldungen ("Keine Verbindung.", "Keine Antwort."
+                 usw.) mit aufklappbaren "Details"; ohne fertige Version auf
+                 GitHub erscheint "Nur Vorabversionen" statt eines Fehlers
   1.63.2026.1111 Navigation klappt (nicht angepinnt) auch aus, wenn die Maus
                  kurz darauf verweilt; Menüs bleiben bei mehreren
                  Bildschirmen auf dem Bildschirm, auf dem sie geöffnet werden

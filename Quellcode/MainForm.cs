@@ -43,7 +43,7 @@ namespace WakeOnLan
         private readonly System.Windows.Forms.Timer _updateTimer = new System.Windows.Forms.Timer { Interval = 15000 };
         private UpdateInfo _update;          // neuere Version (null = keine)
         private bool _updateRunning, _installing, _updateBalloon, _updateBalloonShown;
-        private string _updateError;     // Fehler der letzten Prüfung von Hand (Info-Fenster)
+        private UpdateStatus _updateError; // Fehler bzw. „Nur Vorabversionen“ der letzten Prüfung (Info-Fenster)
         private readonly Panel _updateHost;  // Hinweisleiste oben im Inhalt, nur sichtbar bei neuer Version
         private readonly UpdateBar _updateBar;
         /// <summary>Neustart durch das Update-Skript (--nach-update): Ergebnis melden.</summary>
@@ -593,7 +593,7 @@ namespace WakeOnLan
         {
             string last = _store.UpdateLast == DateTime.MinValue ? "" : "Zuletzt geprüft " + _store.UpdateLast.ToString("dd.MM.yyyy");
             if (_update != null) return new UpdateStatus(UpdateKind.Available, "Version " + _update.Version + " verfügbar", last);
-            if (_updateError != null) return new UpdateStatus(UpdateKind.Failed, "Prüfung nicht möglich", _updateError);
+            if (_updateError != null) return _updateError;
             if (_store.UpdateLast == DateTime.MinValue) return new UpdateStatus(UpdateKind.Unknown, "Noch nicht geprüft", "");
             return new UpdateStatus(UpdateKind.Current, "Aktuell", last);
         }
@@ -635,10 +635,16 @@ namespace WakeOnLan
             }
             catch (Exception ex)
             {
-                if (manual)
+                var st = UpdateStatus.FromError(ex);
+                if (st.Kind != UpdateKind.Failed)
                 {
-                    _updateError = ex.Message; // erscheint im Info-Fenster
+                    // „Nur Vorabversionen“ ist kein Fehler: gilt als geprüft
+                    _update = null;
+                    _updateError = st;
+                    _store.UpdateLast = DateTime.Now;
+                    try { _store.Save(); } catch { }
                 }
+                else if (manual) _updateError = st; // Fehler erscheinen nur nach einer Prüfung von Hand im Info-Fenster
             }
             finally { _updateRunning = false; }
             return UpdateState();
