@@ -162,7 +162,8 @@ namespace WakeOnLan
         /// ZIP herunterladen, Hilfsskript schreiben und starten. Das Skript wartet, bis dieses Programm beendet ist,
         /// ersetzt EXE und Liesmich und startet das Programm neu. Danach muss der Aufrufer das Programm beenden.
         /// </summary>
-        public static async Task Install(UpdateInfo release, Action<int> progress)
+        /// <param name="tray">nach dem Update wieder unsichtbar im Infobereich starten (automatisches Update im Hintergrund)</param>
+        public static async Task Install(UpdateInfo release, Action<int> progress, bool tray)
         {
             if (string.IsNullOrEmpty(release.ZipUrl)) throw new Exception("Im Release ist keine ZIP-Datei angehängt.");
             string blocker = InstallBlocker();
@@ -184,7 +185,7 @@ namespace WakeOnLan
             string target = Path.GetDirectoryName(exe);
             var start = new ProcessStartInfo("powershell.exe",
                 "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -ProcessId " + Process.GetCurrentProcess().Id +
-                " -Zip \"" + zip + "\" -Exe \"" + exe + "\" -Version \"" + release.Version + "\"")
+                " -Zip \"" + zip + "\" -Exe \"" + exe + "\" -Version \"" + release.Version + "\"" + (tray ? " -Tray" : ""))
             { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
             // Programmordner ohne Schreibrechte (z. B. unter Programme): Hilfsskript mit Administratorrechten starten
             if (!CanWrite(target)) start.Verb = "runas";
@@ -204,7 +205,7 @@ namespace WakeOnLan
         }
 
         private const string Script = @"# Wake on LAN – Update (wird vom Programm erzeugt)
-param([int]$ProcessId,[string]$Zip,[string]$Exe,[string]$Version)
+param([int]$ProcessId,[string]$Zip,[string]$Exe,[string]$Version,[switch]$Tray)
 $ErrorActionPreference = 'Stop'
 $log = Join-Path $PSScriptRoot 'Update.log'
 $name = Split-Path $Exe -Leaf
@@ -233,7 +234,7 @@ try {
 } catch {
   ('FEHLER ' + $_.Exception.Message) | Out-File $log -Encoding utf8
 }
-Start-Process -FilePath $Exe -ArgumentList '--nach-update'
+if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' } else { Start-Process -FilePath $Exe -ArgumentList '--nach-update' }
 ";
 
         /// <summary>Aus dem Release-Text nur den Abschnitt "## Änderungen", Punkte als "•", ohne Markdown.</summary>
@@ -298,6 +299,9 @@ Start-Process -FilePath $Exe -ArgumentList '--nach-update'
         public Func<bool> CanInstall;
         public Action Install;
         public Action OpenPage;
+        /// <summary>„Automatisch aktualisieren“ (ohne diese Hooks fehlt die Zeile im Info-Fenster).</summary>
+        public Func<bool> AutoInstall;
+        public Action<bool> SetAutoInstall;
     }
 
     /// <summary>Symbol des Update-Stands (Größe wie die Navigation: 11 pt).</summary>

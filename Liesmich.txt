@@ -136,9 +136,12 @@ BEDIENUNG
                              Benachrichtigungen, Export/Import, Aus alten
                              Skripten übernehmen, Verknüpfung "Alle wecken",
                              Ordner der Geräteliste öffnen
-  Updates                    sucht höchstens einmal täglich auf GitHub nach
-                             einer neuen Version (15 s nach dem Start, im
-                             Infobereich stündlich nachgesehen). Gibt es eine,
+  Updates                    Kurz nach jedem Start wird still auf GitHub nach
+                             einer neuen Version geprüft (ca. 15 s danach,
+                             auch wenn das Programm nur im Infobereich
+                             startet); läuft es im Infobereich weiter, wird
+                             alle 6 Stunden nachgesehen (höchstens einmal in
+                             20 Stunden). Gibt es eine neue Version,
                              erscheint oben eine Hinweisleiste (im Infobereich
                              zusätzlich eine Meldung): "Jetzt aktualisieren"
                              lädt das ZIP, beendet das Programm, ersetzt EXE
@@ -149,7 +152,19 @@ BEDIENUNG
                              GitHub, "Später" blendet den Hinweis aus.
                              Info-Fenster (Klick auf die Version): Stand der
                              letzten Prüfung, "Jetzt prüfen" (bei neuer Version
-                             "Aktualisieren") und "Automatisch prüfen".
+                             "Aktualisieren"), "Automatisch prüfen" und
+                             "Automatisch aktualisieren".
+                             "Automatisch aktualisieren" (Standard aus, nur
+                             zusammen mit "Automatisch prüfen"): Findet die
+                             automatische Prüfung eine neue Version, wird sie
+                             ohne Rückfrage installiert und das Programm
+                             startet neu - im Infobereich, wenn das Fenster
+                             vorher zu war. Wird gerade ein Gerät geweckt, ist
+                             ein Dialog offen oder hat die Seite ungespeicherte
+                             Änderungen, wartet es und versucht es alle 5
+                             Minuten erneut. Liegt das Programm unter
+                             "Programme", fragt Windows bei jedem Update nach
+                             Administratorrechten.
                              Abgefragt wird nur die öffentliche
                              Release-Liste (api.github.com), ohne Anmeldung und
                              ohne persönliche Daten. Im Projektordner (mit
@@ -280,6 +295,11 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.65.2026.1116 Update-Prüfung kurz nach jedem Start (ohne 20-Stunden-Sperre);
+                 neuer Schalter "Automatisch aktualisieren" im Info-Fenster
+                 (Standard aus): installiert neue Versionen ohne Rückfrage,
+                 sobald nichts läuft, und startet neu (im Infobereich, wenn
+                 das Fenster zu war)
   1.64.2026.1113 Info-Fenster, Zeile "Updates" neu geordnet: Knopf neben beiden
                  Zeilen, kurze Meldungen ("Keine Verbindung.", "Keine Antwort."
                  usw.) mit aufklappbaren "Details"; ohne fertige Version auf

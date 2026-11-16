@@ -212,6 +212,8 @@ namespace WakeOnLan
         /// <summary>Automatisch (höchstens alle 20 Stunden) auf GitHub nach einer neuen Version suchen.</summary>
         public bool UpdateCheck = true;
         public DateTime UpdateLast = DateTime.MinValue;
+        /// <summary>Neue Version ohne Rückfrage installieren, sobald das Programm nicht beschäftigt ist (nur mit UpdateCheck).</summary>
+        public bool UpdateAutoInstall;
         /// <summary>Zugeklappte Gruppen in der Liste ("" = Ohne Gruppe).</summary>
         public readonly HashSet<string> Collapsed = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
         /// <summary>Eigene Reihenfolge der Gruppen (neue Gruppen kommen alphabetisch dahinter).</summary>
@@ -257,6 +259,7 @@ namespace WakeOnLan
             Notify = Bool(root, "Benachrichtigungen", true);
             NavPinned = Bool(root, "NavigationAngepinnt", true);
             UpdateCheck = Bool(root, "UpdatePruefen", true);
+            UpdateAutoInstall = Bool(root, "UpdateAutomatischInstallieren", false);
             DateTime last;
             UpdateLast = DateTime.TryParse(Str(root, "UpdateZuletzt"), System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.RoundtripKind, out last) ? last : DateTime.MinValue;
@@ -365,6 +368,7 @@ namespace WakeOnLan
                 root.Add(new XAttribute("Benachrichtigungen", Notify));
                 root.Add(new XAttribute("NavigationAngepinnt", NavPinned));
                 root.Add(new XAttribute("UpdatePruefen", UpdateCheck));
+                root.Add(new XAttribute("UpdateAutomatischInstallieren", UpdateAutoInstall));
                 if (UpdateLast > DateTime.MinValue) root.Add(new XAttribute("UpdateZuletzt", UpdateLast.ToString("o", System.Globalization.CultureInfo.InvariantCulture)));
                 if (WindowWidth > 0 && WindowHeight > 0)
                     root.Add(new XElement("Fenster", new XAttribute("Breite", WindowWidth), new XAttribute("Hoehe", WindowHeight), new XAttribute("Layout", LayoutVersion)));

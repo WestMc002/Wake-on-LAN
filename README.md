@@ -38,7 +38,7 @@ Die Screenshots zeigen erfundene Beispieldaten. Sie entstehen automatisch beim E
 - **Benachrichtigungen** – Windows-Meldung, sobald das geweckte Gerät online ist
 - **Suche, Verlauf, Export/Import** – Suche nach Name, IP, MAC oder Gruppe; Verlauf aller Aktionen; Geräteliste als XML sichern und übertragen
 - **Netzwerksuche** – „Gerät hinzufügen“ › „Im Netzwerk suchen“ findet eingeschaltete Geräte im eigenen Netz (per ARP, mit IP, MAC und Rechnername) und übernimmt sie mit einem Klick
-- **Update-Prüfung** – sucht höchstens einmal täglich auf GitHub nach einer neuen Version; „Jetzt aktualisieren“ lädt sie herunter, ersetzt die EXE und startet neu (abschaltbar im Info-Fenster)
+- **Update-Prüfung** – sucht kurz nach jedem Start auf GitHub nach einer neuen Version; „Jetzt aktualisieren“ lädt sie herunter, ersetzt die EXE und startet neu (abschaltbar im Info-Fenster). Auf Wunsch „Automatisch aktualisieren“: installiert neue Versionen ohne Rückfrage, sobald nichts läuft
 - **Navigation** – links Geräte, Zeitpläne, Verlauf, Steuerung per Handy und Einstellungen; anpinnbar oder eingeklappt nur mit Symbolen (wie bei Sync Pilot)
 - **Übernahme alter Skripte** – liest Batch-Skripte der Form `Wake on LAN (<Gerät>).bat` ein
 

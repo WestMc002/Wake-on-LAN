@@ -41,11 +41,13 @@ namespace WakeOnLan
                 return Demo.RunScreenshots(outDir) ? 0 : 1;
             }
 
-            // Neustart durch das Update-Skript: wie ein normaler Start, das Fenster meldet das Ergebnis
-            if (args.Length == 1 && string.Equals(args[0], "--nach-update", StringComparison.OrdinalIgnoreCase))
+            // Neustart durch das Update-Skript: wie ein normaler Start, das Fenster meldet das Ergebnis;
+            // "--nach-update /tray": war das Fenster vorher zu (automatisches Update), wieder nur im Infobereich starten
+            if (args.Length >= 1 && args.Length <= 2 && string.Equals(args[0], "--nach-update", StringComparison.OrdinalIgnoreCase))
             {
                 MainForm.AfterUpdate = true;
-                args = new string[0];
+                bool tray = args.Length == 2 && (args[1].Equals("/tray", StringComparison.OrdinalIgnoreCase) || args[1].Equals("/hintergrund", StringComparison.OrdinalIgnoreCase));
+                args = tray ? new[] { "/hintergrund" } : new string[0];
             }
 
             var store = new DeviceStore();

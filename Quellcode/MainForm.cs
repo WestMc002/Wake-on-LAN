@@ -553,6 +553,8 @@ namespace WakeOnLan
                 {
                     string v = result.Substring(2).Trim();
                     SetMessage("Update auf Version " + v + " installiert.", Ui.Green);
+                    // im Infobereich gestartet (automatisches Update bei geschlossenem Fenster): kurze Meldung dort
+                    if (!Visible && _notifier != null) _notifier.Show(Ui.AppName, "Update auf Version " + v + " installiert.", ToolTipIcon.Info);
                     History.Add("Wake on LAN", "Update auf Version " + v + " installiert");
                 }
                 else if (result != null)
@@ -562,10 +564,15 @@ namespace WakeOnLan
                     History.Add("Wake on LAN", "Update fehlgeschlagen: " + why);
                 }
             }
+            // still kurz nach jedem Start (ca. 15 s, auch wenn das Programm nur im Infobereich startet), beim Start ohne
+            // die 20-Stunden-Sperre; danach alle 6 Stunden nachsehen, ob die Prüfung fällig ist (läuft oft tagelang im Infobereich)
+            bool atStart = true;
             _updateTimer.Tick += async (s, e) =>
             {
-                _updateTimer.Interval = 6 * 3600000; // danach alle 6 Stunden nachsehen, ob die Prüfung fällig ist (läuft oft tagelang im Infobereich)
-                await CheckForUpdates(false);
+                _updateTimer.Interval = 6 * 3600000;
+                bool first = atStart;
+                atStart = false;
+                await CheckForUpdates(false, first);
             };
             _updateTimer.Start();
         }
@@ -582,6 +589,13 @@ namespace WakeOnLan
                     try { _store.Save(); } catch { }
                 },
                 CheckNow = () => CheckForUpdates(true),
+                AutoInstall = () => _store.UpdateAutoInstall,
+                SetAutoInstall = on =>
+                {
+                    _store.UpdateAutoInstall = on;
+                    try { _store.Save(); } catch { }
+                    if (on && _update != null) TryAutoUpdate(); // schon eine neue Version bekannt: gleich versuchen
+                },
                 CanInstall = () => _update != null && !string.IsNullOrEmpty(_update.ZipUrl) && UpdateCheck.InstallBlocker() == null,
                 Install = () => Post(() => { var t = InstallUpdate(); }), // erst nach dem Schließen des Info-Fensters
                 OpenPage = OpenReleasePage
@@ -592,20 +606,24 @@ namespace WakeOnLan
         private UpdateStatus UpdateState()
         {
             string last = _store.UpdateLast == DateTime.MinValue ? "" : "Zuletzt geprüft " + _store.UpdateLast.ToString("dd.MM.yyyy");
+            // Fehler (auch beim automatischen Installieren) vor „Version x verfügbar“: Kurzmeldung mit „Details“
+            if (_updateError != null && _updateError.Kind == UpdateKind.Failed) return _updateError;
             if (_update != null) return new UpdateStatus(UpdateKind.Available, "Version " + _update.Version + " verfügbar", last);
             if (_updateError != null) return _updateError;
             if (_store.UpdateLast == DateTime.MinValue) return new UpdateStatus(UpdateKind.Unknown, "Noch nicht geprüft", "");
             return new UpdateStatus(UpdateKind.Current, "Aktuell", last);
         }
 
+        private Task<UpdateStatus> CheckForUpdates(bool manual) { return CheckForUpdates(manual, false); }
+
         /// <summary>
-        /// Neueste Version auf GitHub abfragen. Automatisch (manual = false) höchstens alle 20 Stunden und still;
-        /// Fehler dann ohne Meldung (nächster Versuch nach einer Stunde).
+        /// Neueste Version auf GitHub abfragen. Automatisch (manual = false) still: beim Start (atStart) immer,
+        /// die Nachprüfung alle 6 Stunden höchstens alle 20 Stunden. Fehler stehen nur im Info-Fenster.
         /// </summary>
-        private async Task<UpdateStatus> CheckForUpdates(bool manual)
+        private async Task<UpdateStatus> CheckForUpdates(bool manual, bool atStart)
         {
             if (_demo || _updateRunning) return UpdateState();
-            if (!manual && (!_store.UpdateCheck || (DateTime.Now - _store.UpdateLast).TotalHours < 20)) return UpdateState();
+            if (!manual && (!_store.UpdateCheck || (!atStart && (DateTime.Now - _store.UpdateLast).TotalHours < 20))) return UpdateState();
             _updateRunning = true;
             try
             {
@@ -618,6 +636,12 @@ namespace WakeOnLan
                     bool fresh = _update == null || _update.Version != release.Version;
                     _update = release;
                     ShowUpdateBar(true);
+                    // „Automatisch aktualisieren“: ohne Rückfrage installieren, sobald nichts mehr läuft (nicht bei „Jetzt prüfen“)
+                    if (_store.UpdateAutoInstall && !manual && UpdateCheck.InstallBlocker() == null && !string.IsNullOrEmpty(release.ZipUrl))
+                    {
+                        Post(TryAutoUpdate);
+                        return UpdateState();
+                    }
                     // im Infobereich: einmal je Version und Programmstart melden; Klick startet das Update
                     if ((fresh || !_updateBalloonShown) && !manual && !Visible && _notifier != null)
                     {
@@ -644,7 +668,7 @@ namespace WakeOnLan
                     _store.UpdateLast = DateTime.Now;
                     try { _store.Save(); } catch { }
                 }
-                else if (manual) _updateError = st; // Fehler erscheinen nur nach einer Prüfung von Hand im Info-Fenster
+                else _updateError = st; // Fehler nur im Info-Fenster, keine Meldung (auch bei der automatischen Prüfung)
             }
             finally { _updateRunning = false; }
             return UpdateState();
@@ -678,27 +702,80 @@ namespace WakeOnLan
             Ui.Open(_update != null && !string.IsNullOrEmpty(_update.Url) ? _update.Url : UpdateCheck.ReleasesPage);
         }
 
-        private async Task InstallUpdate()
+        private readonly System.Windows.Forms.Timer _autoUpdateRetry = new System.Windows.Forms.Timer { Interval = 5 * 60 * 1000 };
+        private bool _autoUpdateHooked;
+
+        /// <summary>
+        /// Beschäftigt: ein Gerät wird gerade geweckt, die offene Seite hat ungespeicherte Änderungen oder ein Dialog ist offen.
+        /// Dann nicht automatisch aktualisieren (Neustart würde stören).
+        /// </summary>
+        private bool BusyForUpdate()
+        {
+            if (_rows.Any(r => r.WakeStart.HasValue)) return true;
+            var tracked = _view as IHasChanges;
+            if (tracked != null && !_view.IsDisposed && tracked.HasChanges) return true;
+            foreach (Form f in Application.OpenForms)
+                if (f.Visible && f.Modal) return true;
+            return false;
+        }
+
+        /// <summary>„Automatisch aktualisieren“: installieren, wenn nichts läuft – sonst alle 5 Minuten erneut versuchen.</summary>
+        private void TryAutoUpdate()
+        {
+            if (_update == null || _installing || _demo || !_store.UpdateAutoInstall || !_store.UpdateCheck) return;
+            if (UpdateCheck.InstallBlocker() != null || string.IsNullOrEmpty(_update.ZipUrl)) return;
+            if (BusyForUpdate())
+            {
+                if (!_autoUpdateHooked)
+                {
+                    _autoUpdateHooked = true;
+                    _autoUpdateRetry.Tick += (s, e) => { _autoUpdateRetry.Stop(); TryAutoUpdate(); };
+                }
+                _autoUpdateRetry.Stop();
+                _autoUpdateRetry.Start();
+                return;
+            }
+            Post(() => { var t = InstallUpdate(true); });
+        }
+
+        private Task InstallUpdate() { return InstallUpdate(false); }
+
+        private async Task InstallUpdate(bool automatic)
         {
             if (_update == null || _installing) return;
             var info = _update;
-            string text = "Wake on LAN wird beendet, auf Version " + info.Version + " aktualisiert und neu gestartet.\r\n" +
-                "Geräteliste, Zeitpläne und Einstellungen bleiben erhalten.";
-            if (_web != null) text += "\r\nDie Steuerung per Handy ist dabei kurz nicht erreichbar.";
-            if (MessageBox.Show(this, text + "\r\n\r\nJetzt aktualisieren?", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            if (!automatic)
+            {
+                string text = "Wake on LAN wird beendet, auf Version " + info.Version + " aktualisiert und neu gestartet.\r\n" +
+                    "Geräteliste, Zeitpläne und Einstellungen bleiben erhalten.";
+                if (_web != null) text += "\r\nDie Steuerung per Handy ist dabei kurz nicht erreichbar.";
+                if (MessageBox.Show(this, text + "\r\n\r\nJetzt aktualisieren?", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            }
             _installing = true;
             foreach (var b in new[] { _updateBar.Install, _updateBar.Page, _updateBar.Later }) b.Enabled = false;
             string barText = _updateBar.Text;
             try
             {
+                bool hidden = !Visible; // im Infobereich: nach dem Update wieder nur dort starten
                 _updateBar.Text = "Lade Version " + info.Version + " …";
-                await UpdateCheck.Install(info, percent => Post(() => _updateBar.Text = "Lade Version " + info.Version + " … " + percent + " %"));
-                History.Add("Wake on LAN", "Update auf Version " + info.Version + " wird installiert");
+                await UpdateCheck.Install(info, percent => Post(() => _updateBar.Text = "Lade Version " + info.Version + " … " + percent + " %"), hidden);
+                History.Add("Wake on LAN", "Update auf Version " + info.Version + " wird " + (automatic ? "automatisch " : "") + "installiert");
                 _exit = true; // wirklich beenden, nicht in den Infobereich – das Skript wartet darauf und startet neu
-                Close();
+                Close();      // versteckt bleibt das Fenster dabei unsichtbar (kein Aufblitzen)
             }
             catch (Exception ex)
             {
+                if (automatic)
+                {
+                    // automatisch: keine Meldung – Hinweisleiste bleibt, Kurzmeldung mit „Details“ steht im Info-Fenster
+                    _updateError = UpdateStatus.FromError(ex);
+                    _updateBar.Text = barText;
+                    foreach (var b in new[] { _updateBar.Page, _updateBar.Later }) b.Enabled = true;
+                    _updateBar.Install.Enabled = UpdateCheck.InstallBlocker() == null;
+                    _installing = false;
+                    History.Add("Wake on LAN", "Automatisches Update fehlgeschlagen: " + ex.Message);
+                    return;
+                }
                 MessageBox.Show(this, ex.Message, "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 _updateBar.Text = barText;
                 _updateBar.Page.Enabled = true;

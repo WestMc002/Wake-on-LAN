@@ -1044,9 +1044,11 @@ namespace WakeOnLan
                 Auto = () => true,
                 SetAuto = on => { },
                 CheckNow = () => System.Threading.Tasks.Task.FromResult(new UpdateStatus(UpdateKind.Current, "Aktuell", "Zuletzt geprüft " + DateTime.Now.ToString("dd.MM.yyyy"))),
-                CanInstall = () => false
+                CanInstall = () => false,
+                AutoInstall = () => false,
+                SetAutoInstall = on => { }
             } : Updates;
-            var card = new CardPanel(k) { Location = new Point(S(24), y), Size = new Size(W - S(48), S(140) + (updates != null ? S(49) + S(32) : 0)) };
+            var card = new CardPanel(k) { Location = new Point(S(24), y), Size = new Size(W - S(48), S(140) + (updates != null ? S(49) + S(32) + (updates.AutoInstall != null ? S(32) : 0) : 0)) };
             _card = card;
             var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = Ui.Card };
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, S(118)));
@@ -1127,10 +1129,12 @@ namespace WakeOnLan
         private void AddUpdateRows(TableLayoutPanel t, UpdateHooks updates)
         {
             int row = t.RowCount;
-            t.RowCount = row + 2;
+            bool withInstall = updates.AutoInstall != null;
+            t.RowCount = row + (withInstall ? 3 : 2);
             var rowStyle = new RowStyle(SizeType.Absolute, S(49)); // uy … uy + S(49): Überschrift, zweite Zeile, ggf. Details
             t.RowStyles.Add(rowStyle);
             t.RowStyles.Add(new RowStyle(SizeType.Absolute, S(32)));
+            if (withInstall) t.RowStyles.Add(new RowStyle(SizeType.Absolute, S(32)));
             t.Controls.Add(new Label
             {
                 Text = "Updates",
@@ -1296,6 +1300,38 @@ namespace WakeOnLan
             autoCell.Controls.Add(autoText);
             autoCell.Controls.Add(auto);
             t.Controls.Add(autoCell, 1, row + 1);
+
+            // Automatisch aktualisieren: direkt darunter, nur bedienbar, wenn „Automatisch prüfen“ an ist
+            if (!withInstall) return;
+            var instCell = new Panel { Dock = DockStyle.Fill, BackColor = Ui.Card, Margin = new Padding(3, 0, 3, 0) };
+            var inst = new ModernCheck("", k) { Checked = updates.AutoInstall(), BackColor = Ui.Card, Dock = DockStyle.Right, Width = S(46) };
+            var instText = new Label
+            {
+                Text = "Automatisch aktualisieren",
+                ForeColor = Ui.Text,
+                BackColor = Ui.Card,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true,
+                Cursor = Cursors.Hand
+            };
+            const string instTip = "Eine neue Version ohne Rückfrage installieren, sobald Wake on LAN nicht beschäftigt ist. " +
+                "Wake on LAN startet danach von selbst neu (im Infobereich, wenn das Fenster vorher zu war).";
+            tip.SetToolTip(inst, instTip);
+            tip.SetToolTip(instText, instTip);
+            instText.Click += (s, e) => { if (inst.Enabled) inst.Checked = !inst.Checked; };
+            inst.CheckedChanged += (s, e) => { if (updates.SetAutoInstall != null) updates.SetAutoInstall(inst.Checked); };
+            Action sync = () =>
+            {
+                inst.Enabled = auto.Checked;
+                instText.ForeColor = auto.Checked ? Ui.Text : Ui.Disabled;
+                instText.Cursor = auto.Checked ? Cursors.Hand : Cursors.Default;
+            };
+            auto.CheckedChanged += (s, e) => sync();
+            sync();
+            instCell.Controls.Add(instText);
+            instCell.Controls.Add(inst);
+            t.Controls.Add(instCell, 1, row + 2);
         }
 
         private void AddRow(TableLayoutPanel t, ToolTip tip, string name, string value)
