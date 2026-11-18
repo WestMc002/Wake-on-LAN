@@ -295,6 +295,8 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.67.2026.1118 Fußzeile: Abstand von Name und Website bei 100 % und 125 %
+                 Anzeigegröße angepasst (dort vorher zu eng)
   1.66.2026.1116 Fußzeile: Name und Website rechts etwas enger zusammen, so
                  hoch wie das Logo daneben
   1.65.2026.1116 Update-Prüfung kurz nach jedem Start (ohne 20-Stunden-Sperre);

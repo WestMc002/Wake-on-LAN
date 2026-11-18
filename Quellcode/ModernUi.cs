@@ -926,9 +926,9 @@ namespace WakeOnLan
                 var s1 = TextRenderer.MeasureText(g, Name1, f1, Size.Empty, flags);
                 var s2 = TextRenderer.MeasureText(g, Name2, f2, Size.Empty, flags);
                 int tw = Math.Max(s1.Width, s2.Width);
-                // die Zeilen überlappen um 3 × Skalierung: die NoPadding-Höhe enthält oben und unten Platz für Ober- und
-                // Unterlängen, sonst wirkt der Textblock höher als das Logo (globale Vorgabe, Referenz WindowGrid ab 1.56)
-                int gap = -(int)Math.Round(3 * k);
+                // die Zeilen überlappen: die NoPadding-Höhe enthält oben und unten Platz für Ober- und Unterlängen, sonst wirkt
+                // der Textblock höher als das Logo. Abgestuft (globale Vorgabe): 100 % 1 px, 125 % 2 px, ab 150 % 3 × Skalierung
+                int gap = k >= 1.5 ? -(int)Math.Round(3 * k) : (k >= 1.25 ? -2 : -1);
                 int th = s1.Height + gap + s2.Height;
                 int top = (Height - th) / 2;
                 int tx = right - tw;
