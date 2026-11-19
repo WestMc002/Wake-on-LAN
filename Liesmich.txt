@@ -295,6 +295,8 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.68.2026.1119 Hinweisleiste "Neue Version": Knöpfe ohne helle Ecken auf der
+                 getönten Leiste
   1.67.2026.1118 Fußzeile: Abstand von Name und Website bei 100 % und 125 %
                  Anzeigegröße angepasst (dort vorher zu eng)
   1.66.2026.1116 Fußzeile: Name und Website rechts etwas enger zusammen, so

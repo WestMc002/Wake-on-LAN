@@ -492,10 +492,14 @@ if ($Tray) { Start-Process -FilePath $Exe -ArgumentList '--nach-update','/tray' 
         {
             var g = e.Graphics;
             Color back = Parent != null ? Parent.BackColor : Ui.Back;
+            Color fill = Accent.Mix(Ui.Primary, back, 0.14);
+            // Die Knöpfe füllen ihre Ecken mit Parent.BackColor: BackColor = Farbe der Leiste, sonst stehen sie als
+            // helle Rechtecke in der getönten Leiste (auch nach einem Wechsel hell/dunkel)
+            if (BackColor != fill) { BackColor = fill; foreach (Control c in Controls) c.Invalidate(); }
             g.Clear(back);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using (var p = Ui.Rounded(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 8 * k))
-            using (var b = new SolidBrush(Accent.Mix(Ui.Primary, back, 0.14)))
+            using (var b = new SolidBrush(fill))
             using (var pen = new Pen(Accent.Mix(Ui.Primary, back, 0.45)))
             {
                 g.FillPath(b, p);
