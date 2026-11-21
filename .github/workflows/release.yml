@@ -1,23 +1,34 @@
+# Wake on LAN - Release aus dem signierten Release-Paket
+# Das Paket entsteht auf dem PC des Herausgebers (Erstellen.bat: ZIP mit Wake on LAN.exe und
+# Liesmich.txt, dazu ein mit dem privaten Schluessel signiertes Manifest) und liegt im Ordner
+# Release. Der Workflow baut nichts selbst: Er prueft, dass ZIP und Manifest zur Version
+# passen (Name, Version, SHA-256 - die Signatur prueft erst Wake on LAN, der Schluessel ist nicht
+# auf GitHub), und haengt beide an das Release.
+# Ausloeser: Aenderung dieser Datei auf main oder per Hand ueber "Run workflow"
+# (Eingabe der Versionsnummer). Ohne Eingabe gilt die Version aus dem neuesten
+# Commit "Wake on LAN <Version> - Aenderungen".
+# Gibt es das Release zur Version schon, wird nur der Text aufgefrischt.
+# Vorabversion: steht im Titel des Versions-Commits "Vorabversion", wird das Release als
+# Vorabversion (Pre-release) angelegt. Per Hand: Eingabe "vorab" = ja/nein, auto = wie im Commit.
+# Vorabversionen liefert /releases/latest nicht aus - die Update-Pruefung bietet sie nicht an.
+
 name: Release
 
-# Release v<Version> mit "Wake-on-LAN-<Version>.zip" ("Wake on LAN.exe" + Liesmich.txt).
-# Release-Seite: oben "Änderungen" (Punkte aus dem Commit-Text zur Version), darunter die Installation.
-# - Run workflow (Versionsnummer) oder Tag v<Version>: Release anlegen; gibt es es schon,
-#   wird nichts neu gebaut, nur der Release-Text aufgefrischt.
-# - Änderung dieser Datei auf main: Release-Texte aller vorhandenen Releases auffrischen.
 on:
   push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/release.yml'
-    tags:
-      - 'v*'
+    branches: [main]
+    paths: [.github/workflows/release.yml]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version, z. B. 1.9.2026.1101'
-        required: true
+        description: 'Version (z. B. 1.4.2026.1110)'
+        required: false
+      vorab:
+        description: 'Vorabversion (auto = wie im Commit-Titel)'
+        required: false
+        default: 'auto'
+        type: choice
+        options: [auto, ja, nein]
 
 permissions:
   contents: write
@@ -25,111 +36,116 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # ganze Historie, um den Commit zur Version zu finden
+          fetch-depth: 0
 
-      - name: Versionen bestimmen
+      - name: Version lesen
         id: ver
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $existing = @(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName --jq '.[].tagName' | ForEach-Object { $_.TrimStart('v') })
-          $new = ''
-          if ('${{ github.event_name }}' -eq 'workflow_dispatch') { $v = '${{ github.event.inputs.version }}'.TrimStart('v') }
-          elseif ('${{ github.ref_type }}' -eq 'tag') { $v = '${{ github.ref_name }}'.TrimStart('v') }
-          else { $v = '' }   # Änderung des Workflows: nur Texte auffrischen
-          if ($v) {
-            if ($v -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw "Ungültige Version: $v" }
-            if ($existing -notcontains $v) { $new = $v }
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $ver = '${{ github.event.inputs.version }}'
+          if(-not $ver) {
+            $subj = git log --format=%s | Where-Object { $_ -match '^Wake on LAN (\d+\.\d+\.\d+\.\d+)' } | Select-Object -First 1
+            if($subj -match '^Wake on LAN (\d+\.\d+\.\d+\.\d+)') { $ver = $Matches[1] }
           }
-          $refresh = if ($v) { @($existing | Where-Object { $_ -eq $v }) } else { $existing }
-          "new=$new" >> $env:GITHUB_OUTPUT
-          "refresh=$($refresh -join ' ')" >> $env:GITHUB_OUTPUT
-          Write-Host "Neu: '$new' / Text auffrischen: '$($refresh -join ' ')'"
-
-      - name: Release-Texte erstellen
-        shell: pwsh
-        run: |
-          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()   # Umlaute aus git richtig lesen
-          New-Item -ItemType Directory -Path 'notes' -Force | Out-Null
-          $all = @('${{ steps.ver.outputs.new }}') + ('${{ steps.ver.outputs.refresh }}' -split ' ') | Where-Object { $_ }
-          foreach ($ver in $all) {
-            # "Änderungen" = Zeilen mit "- " aus dem neuesten Commit, dessen Text die Version nennt
-            $sha = git log --format=%H -F --grep="$ver" -n 1
-            if (-not $sha) { $sha = git rev-parse HEAD }
-            $body = git log -1 --format=%b $sha
-            $items = @($body -split "`r?`n" | Where-Object { $_ -match '^\s*[-*] ' } | ForEach-Object { '- ' + ($_.Trim() -replace '^[-*]\s+', '') })
-            if ($items.Count -eq 0) { $items = @('- siehe Liesmich.txt') }
-            # Texte mit Variablen ohne typografische Anführungszeichen (sonst ParserError in "…")
-            $lines = @('## Änderungen', '') + $items + @(
-              '',
-              '## Installation',
-              '',
-              "1. ``Wake-on-LAN-$ver.zip`` herunterladen und in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Wake on LAN``.",
-              '2. `Wake on LAN.exe` starten und Geräte anlegen – oder über Einstellungen › Aus alten Skripten übernehmen.',
-              '3. Das Programm an die Taskleiste anheften: Die Sprungliste (Rechtsklick) zeigt Alle wecken, Gruppen und Geräte.',
-              '',
-              'Voraussetzung: Windows 10 (ab Version 1803) oder 11 mit .NET Framework 4.7.2 oder neuer. Für IPMI wird `ipmitool` gebraucht. Ausführliche Beschreibung und Versionsgeschichte: `Liesmich.txt` im ZIP.'
-            )
-            $lines | Set-Content -Path "notes\$ver.md" -Encoding utf8   # pwsh 7: UTF-8 ohne BOM
-            Write-Host "---- $ver"; Get-Content "notes\$ver.md"
+          if($ver -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw "keine gueltige Version gefunden: $ver" }
+          "ver=$ver" >> $env:GITHUB_OUTPUT
+          # Vorabversion? Eingabe ja/nein hat Vorrang, sonst Titel des Versions-Commits
+          $vorab = '${{ github.event.inputs.vorab }}'
+          if(-not $vorab) { $vorab = 'auto' }
+          $pre = 0
+          if($vorab -eq 'ja') { $pre = 1 }
+          elseif($vorab -eq 'auto') {
+            $subj = git log --format=%s -F --grep="$ver" -n 1
+            if($subj -match 'Vorabversion') { $pre = 1 }
           }
+          "pre=$pre" >> $env:GITHUB_OUTPUT
+          "vorab=$vorab" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $ver, Vorabversion: $pre"
+          gh release view "v$ver" *> $null
+          if($LASTEXITCODE -eq 0) { "exists=1" >> $env:GITHUB_OUTPUT; Write-Host "Release v$ver existiert bereits - nur Text auffrischen" }
+          else { "exists=0" >> $env:GITHUB_OUTPUT }
+          exit 0
 
-      - name: Kompilieren
-        if: steps.ver.outputs.new != ''
+      - name: Release-Text erstellen
         shell: pwsh
         run: |
-          $ver = '${{ steps.ver.outputs.new }}'
-          @(
-            "[assembly: System.Reflection.AssemblyVersion(""$ver"")]"
-            "[assembly: System.Reflection.AssemblyFileVersion(""$ver"")]"
-            "[assembly: System.Reflection.AssemblyInformationalVersion(""$ver"")]"
-            "namespace WakeOnLan { public static partial class AppInfo { public const string Version = ""$ver""; } }"
-          ) | Set-Content -Path 'Quellcode\VersionInfo.cs' -Encoding UTF8
-          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
-          $wpf = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\WPF"
-          & $csc /nologo /target:winexe /optimize+ /codepage:65001 "/out:Wake on LAN.exe" `
-            "/win32icon:Resources\WakeOnLan.ico" "/resource:Resources\WakeOnLan.ico,WakeOnLan.ico" `
-            "/resource:Resources\GS-Logo.png,GS-Logo.png" "/resource:Resources\Demo.xml,Demo.xml" `
-            "/resource:Resources\Web\index.html,Web.index.html" "/resource:Resources\Web\app.css,Web.app.css" "/resource:Resources\Web\app.js,Web.app.js" `
-            /win32manifest:Quellcode\app.manifest `
-            /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
-            /r:System.Xml.dll /r:System.Xml.Linq.dll /r:System.Security.dll /r:Microsoft.CSharp.dll `
-            "/lib:$wpf" /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll `
-            Quellcode\*.cs
-          if ($LASTEXITCODE -ne 0) { throw "Kompilieren fehlgeschlagen" }
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $ver = '${{ steps.ver.outputs.ver }}'
+          # neuester Commit, dessen Text die Versionsnummer nennt
+          $sha = git log --format=%H -F --grep="$ver" -n 1
+          $punkte = @()
+          if($sha) {
+            $punkte = @(git log -1 --format=%B $sha | Where-Object { $_ -match '^\s*- ' } | ForEach-Object { $_.Trim() })
+          }
+          $zeilen = New-Object System.Collections.Generic.List[string]
+          if('${{ steps.ver.outputs.pre }}' -eq '1') {
+            $zeilen.Add('> **Vorabversion** zum Testen. Die automatische Update-Prüfung bietet Vorabversionen nicht an.')
+            $zeilen.Add('')
+          }
+          if($punkte.Count -gt 0) {
+            $zeilen.Add('## Änderungen'); $zeilen.Add('')
+            foreach($p in $punkte) { $zeilen.Add($p) }
+            $zeilen.Add('')
+          }
+          $zeilen.Add('## Installation')
+          $zeilen.Add('')
+          $zeilen.Add("- ZIP ``Wake-on-LAN-$ver.zip`` herunterladen und in einen eigenen Ordner mit Schreibrechten entpacken, z. B. ``C:\Tools\Wake on LAN``.")
+          $zeilen.Add('- `Wake on LAN.exe` starten und Geräte anlegen – oder über Einstellungen › Aus alten Skripten übernehmen.')
+          $zeilen.Add('- Das Programm an die Taskleiste anheften: Die Sprungliste (Rechtsklick) zeigt Alle wecken, Gruppen und Geräte.')
+          $zeilen.Add('- Update: Wake on LAN sieht selbst auf GitHub nach neuen Versionen und aktualisiert sich auf Klick (Hinweisleiste oder Info-Fenster).')
+          $zeilen.Add('- Voraussetzung: Windows 10 (ab Version 1803) oder 11 mit .NET Framework 4.7.2 oder neuer. Für IPMI wird `ipmitool` gebraucht.')
+          $zeilen.Add('- Signatur: `Wake-on-LAN-<Version>.manifest` ist die signierte Prüfsumme des ZIP. Wake on LAN installiert Updates nur, wenn diese Signatur gültig ist.')
+          $zeilen.Add('- Ausführliche Beschreibung und Versionsgeschichte in `Liesmich.txt` im ZIP.')
+          [IO.File]::WriteAllText("$PWD\notes.md", ($zeilen -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+          Get-Content notes.md -Encoding utf8
 
-      - name: ZIP packen
-        if: steps.ver.outputs.new != ''
+      - name: Release-Paket pruefen
+        if: steps.ver.outputs.exists == '0'
         shell: pwsh
         run: |
-          # GitHub ersetzt Leerzeichen in Dateinamen von Release-Anhängen durch Punkte -
-          # im ZIP bleibt der Originalname "Wake on LAN.exe" erhalten
-          $ver = '${{ steps.ver.outputs.new }}'
-          New-Item -ItemType Directory -Path 'paket' | Out-Null
-          Copy-Item 'Wake on LAN.exe', 'Liesmich.txt' -Destination 'paket'
-          Compress-Archive -Path 'paket\*' -DestinationPath "Wake-on-LAN-$ver.zip"
+          $ver = '${{ steps.ver.outputs.ver }}'
+          $zip = "Release\Wake-on-LAN-$ver.zip"
+          $man = "Release\Wake-on-LAN-$ver.manifest"
+          if(-not (Test-Path -LiteralPath $zip)) { throw "Im Ordner Release fehlt $zip" }
+          if(-not (Test-Path -LiteralPath $man)) { throw "Im Ordner Release fehlt $man" }
+          $bytes = [IO.File]::ReadAllBytes($man)
+          if([Array]::IndexOf($bytes, [byte]13) -ge 0) { throw 'Das Manifest enthaelt CR (Zeilenende muss LF sein, sonst passt die Signatur nicht)' }
+          $werte = @{}
+          foreach($z in ([Text.Encoding]::UTF8.GetString($bytes) -split "`n")) { if($z -match '^([A-Za-z0-9]+)=(.*)$') { $werte[$Matches[1]] = $Matches[2] } }
+          if($werte['Programm'] -cne 'Wake on LAN') { throw "Manifest: Programm ist '$($werte['Programm'])'" }
+          if($werte['Version'] -cne $ver) { throw "Manifest: Version ist '$($werte['Version'])', erwartet $ver" }
+          if($werte['Datei'] -cne "Wake-on-LAN-$ver.zip") { throw "Manifest: Datei ist '$($werte['Datei'])'" }
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($werte['SHA256'] -cne $hash) { throw "Manifest: SHA256 passt nicht zum ZIP ($hash)" }
+          if(-not $werte['Signatur']) { throw 'Manifest: Signatur fehlt' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $zip).Path)
+          try { $namen = @($z.Entries | ForEach-Object { $_.FullName }) } finally { $z.Dispose() }
+          if($namen -notcontains 'Wake on LAN.exe') { throw 'Im ZIP fehlt Wake on LAN.exe' }
+          Write-Host "Release-Paket in Ordnung: $($namen -join ', ') - SHA256 $hash, Schluessel $($werte['Schluessel'])"
 
       - name: Release anlegen
-        if: steps.ver.outputs.new != ''
+        if: steps.ver.outputs.exists == '0'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $ver = '${{ steps.ver.outputs.new }}'
-          gh release create "v$ver" "Wake-on-LAN-$ver.zip" --repo "${{ github.repository }}" --title "Wake on LAN $ver" --notes-file "notes\$ver.md"
+          $ver = '${{ steps.ver.outputs.ver }}'
+          $ghArgs = @("v$ver", "Release\Wake-on-LAN-$ver.zip", "Release\Wake-on-LAN-$ver.manifest", '--title', "Wake on LAN $ver", '--notes-file', 'notes.md', '--target', $env:GITHUB_SHA)
+          if('${{ steps.ver.outputs.pre }}' -eq '1') { $ghArgs += '--prerelease' }
+          gh release create @ghArgs
 
-      - name: Release-Texte auffrischen
-        if: steps.ver.outputs.refresh != ''
+      - name: Release-Text auffrischen
+        if: steps.ver.outputs.exists == '1'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          foreach ($ver in ('${{ steps.ver.outputs.refresh }}' -split ' ' | Where-Object { $_ })) {
-            gh release edit "v$ver" --repo "${{ github.repository }}" --notes-file "notes\$ver.md"
-            if ($LASTEXITCODE -ne 0) { throw "Release-Text v$ver konnte nicht aktualisiert werden" }
-          }
+          $ver = '${{ steps.ver.outputs.ver }}'
+          $ghArgs = @("v$ver", '--notes-file', 'notes.md')
+          # Vorabversion nur umstellen, wenn ausdrücklich gewählt (ja/nein)
+          if('${{ steps.ver.outputs.vorab }}' -eq 'ja') { $ghArgs += '--prerelease=true' }
+          if('${{ steps.ver.outputs.vorab }}' -eq 'nein') { $ghArgs += '--prerelease=false'; $ghArgs += '--latest' }
+          gh release edit @ghArgs

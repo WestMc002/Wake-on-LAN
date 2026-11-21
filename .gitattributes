@@ -1,0 +1,3 @@
+Release/*.manifest -text
+*.manifest -text
+*.zip binary

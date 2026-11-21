@@ -155,8 +155,8 @@ namespace WakeOnLan
             _cNet = NewCard("Zugriff aus dem Internet");
             _internet = Row(_cNet, 0, "Auch aus dem Internet erreichbar",
                 "Portweiterleitung im Router auf diesen PC. Nur mit HTTPS und einem Passwort ab 12 Zeichen.", _r.Internet);
-            _netHint = HintLabel(_cNet, "Schutz: Nach 5 falschen Passwörtern ist eine Adresse 10 Minuten gesperrt, nach 15 in einer Stunde die Anmeldung " +
-                "von außen 1 Stunde – im Heimnetz geht es weiter. Aus: Die Seite nimmt nur Verbindungen aus dem Heimnetz und per VPN an.");
+            _netHint = HintLabel(_cNet, "Schutz: Nach 5 falschen Passwörtern ist eine Adresse 10 Minuten gesperrt, nach 10 in einer Stunde aus einem Netz " +
+                "dieses Netz 30 Minuten – im Heimnetz geht es weiter. Aus: Die Seite nimmt nur Verbindungen aus dem Heimnetz und per VPN an.");
 
             // ---------- Auf dem Handy öffnen ----------
             _cOpen = NewCard("Auf dem Handy öffnen");

@@ -6,7 +6,7 @@ ECHO #                                     #
 ECHO #  Autor: Guenther Schoder            #
 ECHO #         www.westmc002.de            #
 ECHO #                                     #
-ECHO #  Datum: 01.11.2026 / 02.11.2026     #
+ECHO #  Datum: 01.11.2026 / 21.11.2026     #
 ECHO #######################################
 ECHO.
 
@@ -99,11 +99,37 @@ START "" /WAIT "%EXE%" --screenshots "%CD%\Screenshots"
 IF ERRORLEVEL 1 (ECHO Hinweis: Screenshots fehlgeschlagen - siehe Screenshots\Fehler.txt) ELSE (ECHO Screenshots erstellt.)
 :NOSHOTS
 
+REM Release-Paket fuer GitHub: ZIP (EXE und Liesmich) und signiertes Manifest im Ordner
+REM Release (Schluessel und Skript in ..\Signatur), nur auf Nachfrage: ohne Antwort
+REM nach 10 Sekunden Nein, bei /nopause nie. Ein aelteres Paket wird ersetzt.
+IF /I "%~1"=="/nopause" GOTO :NOPAKET
+ECHO.
+CHOICE /C JN /T 10 /D N /M "Release-Paket erstellen und signieren (nach 10 s automatisch Nein)"
+IF ERRORLEVEL 2 GOTO :NOPAKET
+SET "PAKETDIR=%CD%\Release"
+SET "PAKETNAME=%NAME: =-%-%VER%.zip"
+IF EXIST "%PAKETDIR%\" DEL /F /Q "%PAKETDIR%\*.*" >NUL 2>&1
+IF NOT EXIST "%PAKETDIR%\" MKDIR "%PAKETDIR%"
+powershell -NoProfile -Command "Compress-Archive -LiteralPath '%EXE%','Liesmich.txt' -DestinationPath '%PAKETDIR%\%PAKETNAME%' -Force"
+IF ERRORLEVEL 1 GOTO :ERR_PAKET
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\Signatur\Signieren.ps1" -Programm "%NAME%" -Version "%VER%" -Paket "%PAKETDIR%\%PAKETNAME%"
+IF ERRORLEVEL 1 GOTO :ERR_PAKET
+ECHO Release-Paket erstellt und signiert: Release\%PAKETNAME%
+GOTO :NOPAKET
+
+:ERR_PAKET
+COLOR C0
+SET "RESULT=1"
+ECHO Fehler: Das Release-Paket konnte nicht erstellt oder signiert werden.
+IF EXIST "%PAKETDIR%\" DEL /F /Q "%PAKETDIR%\*.*" >NUL 2>&1
+
+:NOPAKET
+
 REM Sicherung: komplettes Projekt nach Backup\<Projekt> v<Version>
 SET "BAKDIR=Backup\%NAME% v%VER%"
 ECHO.
 ECHO Sichere nach %BAKDIR% ...
-ROBOCOPY "%CD%" "%CD%\%BAKDIR%" /E /XD "%CD%\Backup" /XF "%NEWEXE%" "Erstellen.log" /R:1 /W:1 /NFL /NDL /NJH /NJS /NP >NUL
+ROBOCOPY "%CD%" "%CD%\%BAKDIR%" /E /XD "%CD%\Backup" "%CD%\Release" /XF "%NEWEXE%" "Erstellen.log" /R:1 /W:1 /NFL /NDL /NJH /NJS /NP >NUL
 IF ERRORLEVEL 8 GOTO :ERR_SNAPSHOT
 ECHO Gesichert.
 GOTO :Ende

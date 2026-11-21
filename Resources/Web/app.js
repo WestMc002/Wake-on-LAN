@@ -76,6 +76,8 @@
     $('liste').hidden = true;
     $('abmelden').hidden = true;
     $('anmeldung').hidden = false;
+    // Hinweis bei unverschlüsselter Verbindung (im Heimnetz ist HTTP erlaubt, aus dem Internet nur HTTPS)
+    $('unverschluesselt').hidden = location.protocol !== 'http:';
     setTimeout(function () { $('pin').focus(); }, 50);
   }
 
@@ -278,7 +280,11 @@
   });
   $('alle').addEventListener('click', function () { aktion('/api/all', {}, $('alle')); });
   $('abmelden').addEventListener('click', function () {
-    anfrage('POST', '/api/logout', {}).then(zeigeAnmeldung, zeigeAnmeldung);
+    anfrage('POST', '/api/logout', {}).then(function (a) {
+      // Abmeldung am PC nicht gespeichert: angemeldet bleiben, damit es erneut versucht werden kann
+      if (a._status === 500) { meldung(a.error || 'Abmelden fehlgeschlagen. Bitte erneut versuchen.', 'error'); return; }
+      zeigeAnmeldung();
+    }, function () { meldung('Keine Verbindung zum PC. Abmelden bitte erneut versuchen.', 'error'); });
   });
   $('blatt-abbrechen').addEventListener('click', blattSchliessen);
   function info(an) {

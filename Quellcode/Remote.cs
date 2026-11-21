@@ -70,30 +70,54 @@ namespace WakeOnLan
         /// <summary>Zugriff aus dem Internet ist wirklich offen (nur mit HTTPS).</summary>
         public bool InternetActive { get { return Internet && Https; } }
 
+        /// <summary>Iterationen für PBKDF2-SHA256 (Format „v2“); ältere Prüfwerte („Salz:Hash“, SHA-1, 20 000) werden beim Anmelden umgestellt.</summary>
+        private const int Iterations = 310000;
+
         public void SetPin(string pin)
         {
-            var salt = new byte[16];
-            using (var rng = new RNGCryptoServiceProvider()) rng.GetBytes(salt);
-            PinHash = Convert.ToBase64String(salt) + ":" + Convert.ToBase64String(Derive(pin, salt));
+            PinHash = HashPin(pin);
             NewSecret();
         }
 
-        public bool CheckPin(string pin)
+        private static string HashPin(string pin)
         {
+            var salt = new byte[16];
+            using (var rng = new RNGCryptoServiceProvider()) rng.GetBytes(salt);
+            return "v2:" + Iterations + ":" + Convert.ToBase64String(salt) + ":" + Convert.ToBase64String(Derive(pin, salt, Iterations, true));
+        }
+
+        public bool CheckPin(string pin) { string upgraded; return CheckPin(pin, out upgraded); }
+
+        /// <summary>Passwort prüfen. Ist der gespeicherte Prüfwert im alten Format, liefert upgraded den neuen (sonst null).</summary>
+        public bool CheckPin(string pin, out string upgraded)
+        {
+            upgraded = null;
             try
             {
-                int i = PinHash.IndexOf(':');
-                if (i <= 0 || pin == null) return false;
-                byte[] salt = Convert.FromBase64String(PinHash.Substring(0, i));
-                byte[] hash = Convert.FromBase64String(PinHash.Substring(i + 1));
-                return Same(hash, Derive(pin, salt));
+                if (pin == null) return false;
+                var p = PinHash.Split(':');
+                if (p.Length == 4 && p[0] == "v2")
+                {
+                    int n = int.Parse(p[1], CultureInfo.InvariantCulture);
+                    if (n < 100000 || n > 5000000) return false;
+                    bool ok2 = Same(Convert.FromBase64String(p[3]), Derive(pin, Convert.FromBase64String(p[2]), n, true));
+                    if (ok2 && n < Iterations) upgraded = HashPin(pin);
+                    return ok2;
+                }
+                if (p.Length != 2) return false;
+                bool ok = Same(Convert.FromBase64String(p[1]), Derive(pin, Convert.FromBase64String(p[0]), 20000, false));
+                if (ok) upgraded = HashPin(pin); // altes Format: auf v2 umstellen
+                return ok;
             }
             catch { return false; }
         }
 
-        private static byte[] Derive(string pin, byte[] salt)
+        private static byte[] Derive(string pin, byte[] salt, int iterations, bool sha256)
         {
-            using (var kdf = new Rfc2898DeriveBytes(Encoding.UTF8.GetBytes(pin), salt, 20000)) return kdf.GetBytes(32);
+            using (var kdf = sha256
+                ? new Rfc2898DeriveBytes(Encoding.UTF8.GetBytes(pin), salt, iterations, HashAlgorithmName.SHA256)
+                : new Rfc2898DeriveBytes(Encoding.UTF8.GetBytes(pin), salt, iterations))
+                return kdf.GetBytes(32);
         }
 
         /// <summary>Neuer Anmeldeschlüssel: alle angemeldeten Handys müssen das Passwort neu eingeben.</summary>
@@ -207,6 +231,122 @@ namespace WakeOnLan
         }
     }
 
+    /// <summary>
+    /// Anmeldungen der Handys: jede Anmeldung bekommt ein eigenes Token „Ablauf.Zufall.Signatur“ (HMAC-SHA256 mit dem
+    /// Anmeldeschlüssel). Der Server prüft Signatur und Ablauf selbst; „Abmelden“ sperrt genau dieses Token (gespeichert
+    /// als SHA-256 in %LOCALAPPDATA%\Wake on LAN\Abgemeldet.txt bis zum Ablauf). „Alle Handys abmelden“ erneuert den Schlüssel.
+    /// </summary>
+    internal static class Sessions
+    {
+        private static readonly object Lock = new object();
+        private static Dictionary<string, long> _revoked;
+        private static bool _loadFailed, _reported;
+        /// <summary>Fehler beim Lesen oder Speichern der Abmeldungen (für das Protokoll).</summary>
+        public static Action<string> Report;
+
+        private static string FilePath { get { return Path.Combine(DeviceStore.DataFolder, "Abgemeldet.txt"); } }
+
+        public static string Create(string secret, TimeSpan valid)
+        {
+            long until = DateTimeOffset.UtcNow.Add(valid).ToUnixTimeSeconds();
+            var rnd = new byte[18];
+            using (var rng = new RNGCryptoServiceProvider()) rng.GetBytes(rnd);
+            string body = until.ToString(CultureInfo.InvariantCulture) + "." + B64(rnd);
+            return body + "." + Sign(body, secret);
+        }
+
+        public static bool Valid(string token, string secret)
+        {
+            long until;
+            if (!Parse(token, secret, out until)) return false;
+            if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= until) return false;
+            lock (Lock)
+            {
+                Load();
+                if (_loadFailed) return false; // Abmeldungen nicht lesbar: sicherheitshalber keine Anmeldung gelten lassen
+                return !_revoked.ContainsKey(Hash(token));
+            }
+        }
+
+        /// <summary>Anmeldung widerrufen; false, wenn der Widerruf nicht dauerhaft gespeichert werden konnte.</summary>
+        public static bool Revoke(string token, string secret)
+        {
+            long until;
+            if (!Parse(token, secret, out until)) return true; // nichts zu widerrufen
+            lock (Lock)
+            {
+                Load();
+                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                foreach (var k in _revoked.Where(p => p.Value <= now).Select(p => p.Key).ToList()) _revoked.Remove(k);
+                _revoked[Hash(token)] = until;
+                try
+                {
+                    // atomar speichern: erst Hilfsdatei, dann ersetzen
+                    Directory.CreateDirectory(DeviceStore.DataFolder);
+                    string tmp = FilePath + ".neu";
+                    File.WriteAllLines(tmp, _revoked.Select(p => p.Key + " " + p.Value.ToString(CultureInfo.InvariantCulture)));
+                    if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null);
+                    else File.Move(tmp, FilePath);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    if (Report != null) Report("Abmeldung konnte nicht gespeichert werden (" + ex.Message + ") – gilt bis zum Programmende.");
+                    return false;
+                }
+            }
+        }
+
+        private static bool Parse(string token, string secret, out long until)
+        {
+            until = 0;
+            if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(secret) || token.Length > 200) return false;
+            int dot = token.LastIndexOf('.');
+            if (dot <= 0) return false;
+            string body = token.Substring(0, dot);
+            var parts = body.Split('.');
+            if (parts.Length != 2 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out until)) return false;
+            return RemoteSettings.Same(Encoding.ASCII.GetBytes(token.Substring(dot + 1)), Encoding.ASCII.GetBytes(Sign(body, secret)));
+        }
+
+        private static void Load()
+        {
+            if (_revoked != null && !_loadFailed) return;
+            _revoked = new Dictionary<string, long>();
+            _loadFailed = false;
+            try
+            {
+                if (!File.Exists(FilePath)) return;
+                foreach (string line in File.ReadAllLines(FilePath))
+                {
+                    var p = line.Split(' ');
+                    long u;
+                    if (p.Length == 2 && p[0].Length == 64 && long.TryParse(p[1], NumberStyles.None, CultureInfo.InvariantCulture, out u)) _revoked[p[0]] = u;
+                    else if (line.Trim().Length > 0) throw new InvalidDataException("Zeile unlesbar");
+                }
+            }
+            catch (Exception ex)
+            {
+                // nicht lesbar: keine Anmeldung gelten lassen (beim nächsten Zugriff erneut versuchen) und melden
+                _loadFailed = true;
+                if (Report != null && !_reported) { _reported = true; } else return;
+                Report("Liste der Abmeldungen nicht lesbar (" + ex.Message + ") – Handys müssen sich neu anmelden; Datei prüfen: " + FilePath);
+            }
+        }
+
+        private static string Sign(string body, string secret)
+        {
+            using (var h = new HMACSHA256(Encoding.ASCII.GetBytes(secret))) return B64(h.ComputeHash(Encoding.ASCII.GetBytes(body)));
+        }
+
+        private static string Hash(string token)
+        {
+            using (var s = SHA256.Create()) return BitConverter.ToString(s.ComputeHash(Encoding.ASCII.GetBytes(token))).Replace("-", "");
+        }
+
+        private static string B64(byte[] b) { return Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_'); }
+    }
+
     /// <summary>Verbindung zwischen Webseite und Hauptfenster (Aufrufe kommen aus Hintergrund-Threads).</summary>
     internal interface IRemoteHost
     {
@@ -217,6 +357,8 @@ namespace WakeOnLan
         /// <summary>Akzentfarben für die Webseite als CSS.</summary>
         string ThemeCss();
         void Log(string text);
+        /// <summary>Passwort-Prüfwert wurde beim Anmelden auf das neue Format umgestellt: speichern.</summary>
+        void PinUpgraded(string oldHash, string newHash);
     }
 
     /// <summary>
@@ -227,10 +369,19 @@ namespace WakeOnLan
     internal sealed class WebServer : IDisposable
     {
         private const int MaxConnections = 32;
+        /// <summary>Höchstens so viele gleichzeitige Verbindungen je Adresse (ein Handy braucht 2–6).</summary>
+        private const int MaxConnectionsPerIp = 8;
+        /// <summary>Feste Fristen: TLS-Handshake und eine ganze Anfrage (Kopf und Inhalt) – langsames Tröpfeln hält keinen Platz fest.</summary>
+        private const int HandshakeMs = 10000, RequestMs = 15000;
+        /// <summary>Gültigkeit einer Anmeldung (je Handy eigenes Token, serverseitig geprüft).</summary>
+        private static readonly TimeSpan SessionTime = TimeSpan.FromDays(180);
         private const int MaxFails = 5;
         private static readonly TimeSpan LockTime = TimeSpan.FromMinutes(10);
-        /// <summary>Aus dem Internet: höchstens so viele falsche Passwörter je Stunde (alle Adressen zusammen), sonst Anmeldung von außen 1 Stunde gesperrt.</summary>
-        private const int MaxInternetFails = 15;
+        /// <summary>Aus dem Internet: ab so vielen falschen Versuchen je Stunde (alle Netze zusammen) höchstens ein Versuch alle 30 Sekunden – nur für Netze mit eigenen Fehlversuchen.</summary>
+        private const int MaxInternetFails = 100;
+        /// <summary>Aus dem Internet je Netz (IPv4 /24, IPv6 /64): höchstens so viele falsche Versuche je Stunde, dann 30 Minuten Pause für dieses Netz.</summary>
+        private const int MaxPrefixFails = 10;
+        private static readonly TimeSpan PrefixLockTime = TimeSpan.FromMinutes(30);
 
         private readonly RemoteSettings _settings;
         private readonly IRemoteHost _host;
@@ -245,10 +396,66 @@ namespace WakeOnLan
         private X509Certificate2 _cert;
         private DateTime _certTime, _keyTime, _lastCertCheck;
 
+        private readonly Dictionary<string, int> _perIp = new Dictionary<string, int>();
         private readonly object _failLock = new object();
         private readonly Dictionary<string, int> _fails = new Dictionary<string, int>();
         private readonly Dictionary<string, DateTime> _locked = new Dictionary<string, DateTime>();
         private readonly List<DateTime> _internetFails = new List<DateTime>();
+        private readonly Dictionary<string, List<DateTime>> _prefixFails = new Dictionary<string, List<DateTime>>();
+        private readonly Dictionary<string, DateTime> _prefixLocked = new Dictionary<string, DateTime>();
+        private readonly Dictionary<string, DateTime> _prefixLastFail = new Dictionary<string, DateTime>(); // letzter Fehlversuch je Netz
+        private DateTime _lastPrune = DateTime.MinValue;
+        private const int MaxTrackedPrefixes = 5000, MaxTrackedIps = 10000; // feste Obergrenzen für den Speicher
+
+        /// <summary>
+        /// Speicher der Drosselung aufräumen (nur unter _failLock aufrufen): abgelaufene Einträge aller Netze und Adressen
+        /// entfernen – auch von solchen, aus denen nichts mehr kommt – und die Zahl der gemerkten Einträge fest begrenzen.
+        /// </summary>
+        private void PruneFails(DateTime now)
+        {
+            bool full = _prefixLastFail.Count > MaxTrackedPrefixes || _prefixFails.Count > MaxTrackedPrefixes
+                || _prefixLocked.Count > MaxTrackedPrefixes || _fails.Count > MaxTrackedIps || _locked.Count > MaxTrackedIps;
+            if (!full && (now - _lastPrune).TotalMinutes < 1) return; // höchstens einmal je Minute, außer eine Grenze ist erreicht
+            _lastPrune = now;
+            foreach (var p in _prefixFails.ToList())
+            {
+                p.Value.RemoveAll(t => (now - t).TotalHours >= 1);
+                if (p.Value.Count == 0) _prefixFails.Remove(p.Key);
+            }
+            foreach (var k in _prefixLocked.Where(p => p.Value <= now).Select(p => p.Key).ToList()) _prefixLocked.Remove(k);
+            foreach (var k in _prefixLastFail.Where(p => (now - p.Value).TotalHours >= 1).Select(p => p.Key).ToList()) _prefixLastFail.Remove(k);
+            foreach (var k in _locked.Where(p => p.Value <= now).Select(p => p.Key).ToList()) { _locked.Remove(k); _fails.Remove(k); }
+            // noch immer zu viele Netze (Versuche aus sehr vielen Netzen): die am längsten ruhigen vergessen,
+            // gesperrte zuletzt – die gemeinsame Grenze bremst solche Angriffe ohnehin
+            if (_prefixLastFail.Count > MaxTrackedPrefixes || _prefixFails.Count > MaxTrackedPrefixes || _prefixLocked.Count > MaxTrackedPrefixes)
+            {
+                var keys = _prefixLastFail.Keys.Union(_prefixFails.Keys).Union(_prefixLocked.Keys)
+                    .OrderBy(k => _prefixLocked.ContainsKey(k) ? 1 : 0)
+                    .ThenBy(k => { DateTime t; return _prefixLastFail.TryGetValue(k, out t) ? t : DateTime.MinValue; })
+                    .ToList();
+                foreach (var k in keys.Take(keys.Count - MaxTrackedPrefixes * 9 / 10))
+                {
+                    _prefixLastFail.Remove(k);
+                    _prefixFails.Remove(k);
+                    _prefixLocked.Remove(k);
+                }
+            }
+            // ebenso die Zähler je Adresse: nicht gesperrte zuerst vergessen
+            if (_fails.Count > MaxTrackedIps)
+                foreach (var k in _fails.Keys.Where(k => !_locked.ContainsKey(k)).Take(_fails.Count - MaxTrackedIps * 9 / 10).ToList()) _fails.Remove(k);
+            if (_locked.Count > MaxTrackedIps)
+                foreach (var k in _locked.OrderBy(p => p.Value).Take(_locked.Count - MaxTrackedIps * 9 / 10).Select(p => p.Key).ToList()) { _locked.Remove(k); _fails.Remove(k); }
+        }
+
+        /// <summary>Netz einer Adresse für die Drosselung: IPv4 /24, IPv6 /64 (Angreifer wechseln meist nur die letzte Stelle).</summary>
+        private static string Prefix(string ip)
+        {
+            IPAddress a;
+            if (!IPAddress.TryParse(ip, out a)) return ip;
+            var b = a.GetAddressBytes();
+            if (a.AddressFamily == AddressFamily.InterNetwork) return b[0] + "." + b[1] + "." + b[2] + ".0/24";
+            return BitConverter.ToString(b, 0, 8) + "::/64";
+        }
         private DateTime _internetLockedUntil = DateTime.MinValue;
 
         private static readonly object IconLock = new object();
@@ -258,6 +465,7 @@ namespace WakeOnLan
         {
             _settings = settings.Clone();
             _host = host;
+            Sessions.Report = text => { try { host.Log(text); } catch { } };
             _token = _settings.Token();
         }
 
@@ -388,9 +596,22 @@ namespace WakeOnLan
                     Thread.Sleep(200);
                     continue;
                 }
+                string key;
+                try { var ep = (IPEndPoint)client.Client.RemoteEndPoint; key = (ep.Address.IsIPv4MappedToIPv6 ? ep.Address.MapToIPv4() : ep.Address).ToString(); }
+                catch { try { client.Close(); } catch { } continue; }
+                bool full;
+                lock (_perIp)
+                {
+                    int n;
+                    _perIp.TryGetValue(key, out n);
+                    full = n >= MaxConnectionsPerIp;
+                    if (!full) _perIp[key] = n + 1;
+                }
+                if (full) { try { client.Close(); } catch { } continue; }
                 if (Interlocked.Increment(ref _connections) > MaxConnections)
                 {
                     Interlocked.Decrement(ref _connections);
+                    Release(key);
                     try { client.Close(); } catch { }
                     continue;
                 }
@@ -401,9 +622,19 @@ namespace WakeOnLan
                     finally
                     {
                         Interlocked.Decrement(ref _connections);
+                        Release(key);
                         try { client.Close(); } catch { }
                     }
                 });
+            }
+        }
+
+        private void Release(string key)
+        {
+            lock (_perIp)
+            {
+                int n;
+                if (_perIp.TryGetValue(key, out n)) { if (n <= 1) _perIp.Remove(key); else _perIp[key] = n - 1; }
             }
         }
 
@@ -481,7 +712,7 @@ namespace WakeOnLan
             bool local = IsLocalNetwork(ip);
             if (!local && !_settings.InternetActive) return; // aus dem Internet (ohne Freigabe): Verbindung sofort schließen
             client.NoDelay = true;
-            client.ReceiveTimeout = 20000;
+            client.ReceiveTimeout = 10000;
             client.SendTimeout = 20000;
             Stream stream = client.GetStream();
             bool https = _settings.Https;
@@ -494,12 +725,14 @@ namespace WakeOnLan
                 if (first == 0x16)
                 {
                     var ssl = new SslStream(prefixed, false);
-                    ssl.AuthenticateAsServer(Certificate(), false, SslProtocols.Tls12, false);
+                    // feste Frist für den Handshake: danach Verbindung schließen
+                    using (new Timer(_ => { try { client.Close(); } catch { } }, null, HandshakeMs, Timeout.Infinite))
+                        ssl.AuthenticateAsServer(Certificate(), false, SslProtocols.Tls12, false);
                     stream = ssl;
                 }
                 else
                 {
-                    var reader = new HttpReader(prefixed);
+                    var reader = new HttpReader(prefixed, RequestMs);
                     var req = reader.ReadRequest();
                     if (req == null) return;
                     string host = SafeHost(req.Header("Host"));
@@ -510,7 +743,7 @@ namespace WakeOnLan
             }
             using (stream)
             {
-                var r = new HttpReader(stream);
+                var r = new HttpReader(stream, RequestMs);
                 for (int n = 0; n < 200 && !_stop; n++)
                 {
                     var req = r.ReadRequest();
@@ -574,6 +807,12 @@ namespace WakeOnLan
                 case "/api/login": Login(req, res, ip, local, form); return;
                 case "/api/pair": Pair(res, ip, local, form); return;
                 case "/api/logout":
+                    if (!Sessions.Revoke(req.Cookie("wol"), _token))
+                    {
+                        // nicht dauerhaft gespeichert: Cookie behalten, damit das Handy es erneut versuchen kann
+                        res.Json(500, "{\"error\":" + Json.Str("Die Abmeldung konnte am PC nicht dauerhaft gespeichert werden. Bitte erneut versuchen.") + "}");
+                        return;
+                    }
                     res.Cookie = CookieValue("", 0);
                     res.Json(200, "{\"ok\":true}");
                     return;
@@ -604,10 +843,10 @@ namespace WakeOnLan
             return string.Equals(origin, (https ? "https://" : "http://") + host, StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>Gültige Anmeldung: eigenes Token je Handy, vom Server signiert, mit Ablauf und nicht abgemeldet.</summary>
         private bool Authorized(HttpRequest req)
         {
-            string cookie = req.Cookie("wol");
-            return _token != null && cookie != null && RemoteSettings.Same(Encoding.ASCII.GetBytes(cookie), Encoding.ASCII.GetBytes(_token));
+            return _token != null && Sessions.Valid(req.Cookie("wol"), _token);
         }
 
         private string CookieValue(string value, int maxAge)
@@ -618,8 +857,10 @@ namespace WakeOnLan
         private void Login(HttpRequest req, Response res, string ip, bool local, Dictionary<string, string> form)
         {
             if (Blocked(res, ip, local)) return;
-            if (_settings.CheckPin(Get(form, "passwort")))
+            string upgraded, old = _settings.PinHash;
+            if (_settings.CheckPin(Get(form, "passwort"), out upgraded))
             {
+                if (upgraded != null) { _settings.PinHash = upgraded; try { _host.PinUpgraded(old, upgraded); } catch { } }
                 LoggedIn(res, ip, local, "Handy angemeldet");
                 return;
             }
@@ -644,7 +885,7 @@ namespace WakeOnLan
         private void LoggedIn(Response res, string ip, bool local, string what)
         {
             lock (_failLock) _fails.Remove(ip);
-            res.Cookie = CookieValue(_token, 400 * 24 * 3600);
+            res.Cookie = CookieValue(Sessions.Create(_token, SessionTime), (int)SessionTime.TotalSeconds);
             _host.Log(what + " (" + ip + (local ? "" : ", aus dem Internet") + ")");
             res.Json(200, "{\"ok\":true}");
         }
@@ -654,10 +895,24 @@ namespace WakeOnLan
         {
             lock (_failLock)
             {
-                if (!local && DateTime.UtcNow < _internetLockedUntil)
+                if (!local)
                 {
-                    res.Json(429, "{\"error\":" + Json.Str("Anmeldung aus dem Internet ist wegen vieler falscher Versuche vorübergehend gesperrt.") + "}");
-                    return true;
+                    // zuerst das eigene Netz (eine Quelle kann so nicht die Kapazität für alle verbrauchen), dann die
+                    // gemeinsame Grenze, die nur bei Versuchen aus vielen Netzen greift
+                    DateTime pu;
+                    string pfx = Prefix(ip);
+                    // die gemeinsame Grenze gilt nur für Netze, aus denen in der letzten Stunde falsche Versuche kamen –
+                    // ein Netz ohne Fehlversuche behält sein eigenes Budget und kann sich weiter anmelden
+                    DateTime lf;
+                    bool hadFails = _prefixLastFail.TryGetValue(pfx, out lf) && (DateTime.UtcNow - lf).TotalHours < 1;
+                    DateTime global = hadFails ? _internetLockedUntil : DateTime.MinValue;
+                    DateTime until2 = _prefixLocked.TryGetValue(pfx, out pu) && pu > global ? pu : global;
+                    if (DateTime.UtcNow < until2)
+                    {
+                        int s = Math.Max(1, (int)Math.Ceiling((until2 - DateTime.UtcNow).TotalSeconds));
+                        res.Json(429, "{\"error\":" + Json.Str("Wegen vieler falscher Versuche bitte in " + (s > 90 ? (s + 59) / 60 + " Minuten" : s + " Sekunden") + " erneut versuchen.") + "}");
+                        return true;
+                    }
                 }
                 DateTime until;
                 if (_locked.TryGetValue(ip, out until))
@@ -680,20 +935,38 @@ namespace WakeOnLan
             int fails;
             lock (_failLock)
             {
+                PruneFails(DateTime.UtcNow);
                 _fails.TryGetValue(ip, out fails);
                 fails++;
                 _fails[ip] = fails;
                 if (fails >= MaxFails) _locked[ip] = DateTime.UtcNow + LockTime;
                 if (!local)
                 {
-                    // Angreifer wechseln die Adresse: alle Fehlversuche von außen zusammen begrenzen
-                    _internetFails.Add(DateTime.UtcNow);
-                    _internetFails.RemoveAll(t => (DateTime.UtcNow - t).TotalHours >= 1);
+                    var now = DateTime.UtcNow;
+                    // je Netz: höchstens 10 Fehlversuche je Stunde, dann 30 Minuten Pause nur für dieses Netz
+                    string pfx = Prefix(ip);
+                    List<DateTime> list;
+                    if (!_prefixFails.TryGetValue(pfx, out list)) _prefixFails[pfx] = list = new List<DateTime>();
+                    list.Add(now);
+                    list.RemoveAll(t => (now - t).TotalHours >= 1);
+                    _prefixLastFail[pfx] = now;
+                    if (list.Count >= MaxPrefixFails)
+                    {
+                        _prefixLocked[pfx] = now + PrefixLockTime;
+                        list.Clear();
+                        _host.Log("Anmeldung aus " + pfx + " für 30 Minuten gedrosselt (" + MaxPrefixFails + " falsche Versuche in einer Stunde).");
+                    }
+                    // gemeinsame Grenze nur gegen Versuche aus vielen Netzen (eine Quelle allein erreicht sie nicht):
+                    // ab 100 Fehlversuchen je Stunde höchstens ein Versuch von außen alle 30 Sekunden
+                    _internetFails.Add(now);
+                    _internetFails.RemoveAll(t => (now - t).TotalHours >= 1);
+                    if (_internetFails.Count > MaxInternetFails * 10) _internetFails.RemoveRange(0, _internetFails.Count - MaxInternetFails * 10);
                     if (_internetFails.Count >= MaxInternetFails)
                     {
-                        _internetLockedUntil = DateTime.UtcNow.AddHours(1);
-                        _internetFails.Clear();
-                        _host.Log("Anmeldung aus dem Internet für 1 Stunde gesperrt (" + MaxInternetFails + " falsche Passwörter in einer Stunde). Im Heimnetz geht es weiter.");
+                        _internetLockedUntil = now + TimeSpan.FromSeconds(30);
+                        if (_internetFails.Count == MaxInternetFails)
+                            _host.Log("Anmeldung aus dem Internet gedrosselt (" + MaxInternetFails + " falsche Versuche aus vielen Netzen in einer Stunde): " +
+                                "höchstens ein Versuch alle 30 Sekunden. Angemeldete Handys und das Heimnetz sind nicht betroffen.");
                     }
                 }
             }
@@ -877,12 +1150,16 @@ namespace WakeOnLan
         private readonly byte[] _buf = new byte[4096];
         private int _pos, _len;
 
-        public HttpReader(Stream s) { _s = s; }
+        private readonly int _limitMs;
+        private DateTime _deadline = DateTime.MaxValue;
+
+        public HttpReader(Stream s, int limitMs) { _s = s; _limitMs = limitMs; }
 
         private int Next()
         {
             if (_pos >= _len)
             {
+                if (DateTime.UtcNow > _deadline) throw new IOException("Frist für die Anfrage abgelaufen");
                 _len = _s.Read(_buf, 0, _buf.Length);
                 _pos = 0;
                 if (_len <= 0) return -1;
@@ -910,11 +1187,21 @@ namespace WakeOnLan
             try
             {
                 int budget = 16384;
+                _deadline = DateTime.MaxValue;
+                // erstes Byte abwarten (Leerlauf bei Keep-Alive begrenzt die ReceiveTimeout), danach gilt die feste Frist
+                if (_pos >= _len)
+                {
+                    _len = _s.Read(_buf, 0, _buf.Length);
+                    _pos = 0;
+                    if (_len <= 0) return null;
+                }
+                _deadline = DateTime.UtcNow.AddMilliseconds(_limitMs);
                 string first = Line(ref budget);
                 while (first != null && first.Length == 0) first = Line(ref budget);
                 if (first == null) return null;
                 var parts = first.Split(' ');
-                if (parts.Length < 3) return null;
+                // streng: genau „Methode Ziel HTTP/1.x“, sonst Verbindung schließen
+                if (parts.Length != 3 || !(parts[2] == "HTTP/1.1" || parts[2] == "HTTP/1.0") || parts[1].Length == 0) return null;
                 var req = new HttpRequest { Method = parts[0].ToUpperInvariant() };
                 string target = parts[1];
                 int q = target.IndexOf('?');
@@ -926,10 +1213,19 @@ namespace WakeOnLan
                     if (line == null) return null;
                     if (line.Length == 0) break;
                     int c = line.IndexOf(':');
-                    if (c > 0) req.Headers[line.Substring(0, c).Trim()] = line.Substring(c + 1).Trim();
+                    // mehrdeutige Anfragen zurückweisen: Zeilen ohne Doppelpunkt, Leerzeichen im Namen, doppelte Header
+                    if (c <= 0 || line[0] == ' ' || line[0] == '\t') return null;
+                    string key = line.Substring(0, c);
+                    if (key.IndexOfAny(new[] { ' ', '\t' }) >= 0) return null;
+                    if (req.Headers.ContainsKey(key)) return null;
+                    req.Headers[key] = line.Substring(c + 1).Trim();
                 }
-                int length;
-                if (int.TryParse(req.Header("Content-Length") ?? "0", NumberStyles.None, CultureInfo.InvariantCulture, out length) && length > 0)
+                // Transfer-Encoding wird nicht unterstützt; Content-Length nur als reine Zahl
+                if (req.Header("Transfer-Encoding") != null) return null;
+                int length = 0;
+                string cl = req.Header("Content-Length");
+                if (cl != null && !int.TryParse(cl, NumberStyles.None, CultureInfo.InvariantCulture, out length)) return null;
+                if (length > 0)
                 {
                     if (length > 8192) return null;
                     var body = new byte[length];

@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -203,6 +204,103 @@ namespace WakeOnLan
     /// Moderner Ordnerdialog von Windows (wie im Explorer, folgt hell/dunkel) statt der alten Baumansicht des
     /// FolderBrowserDialog. Rückfall auf den FolderBrowserDialog, falls der COM-Dialog nicht verfügbar ist.
     /// </summary>
+    /// <summary>
+    /// Vorschau vor dem Import einer Geräteliste (globale Vorgabe „Sicherung wiederherstellen“): alle Geräte mit Ziel und
+    /// Einstellungen; IPMI und Herunterfahren werden hervorgehoben und nur mit eigenem Schalter übernommen (Standard aus).
+    /// Vorauswahl ist „Abbrechen“.
+    /// </summary>
+    internal sealed class ImportPreview : FixedForm
+    {
+        private readonly float k;
+        private readonly ModernCheck _replace, _risky;
+
+        public bool Replace { get { return _replace != null && _replace.Checked; } }
+        public bool TakeRisky { get { return _risky != null && _risky.Checked; } }
+
+        public ImportPreview(string file, IList<Device> devices, Func<string, bool> exists)
+        {
+            Theme.Refresh();
+            Text = Ui.AppName;
+            Icon = Ui.WindowIcon();
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Ui.Back;
+            Font = new Font("Segoe UI", 9.5f);
+            using (var g = CreateGraphics()) k = g.DpiX / 96f;
+            int pad = S(24), W = S(640), inner = W - 2 * pad;
+
+            int existing = devices.Count(d => exists(d.Name));
+            int risky = devices.Count(d => d.UseIpmi || d.ShutdownUser.Length > 0);
+            var intro = new Label
+            {
+                Text = devices.Count + (devices.Count == 1 ? " Gerät" : " Geräte") + " in „" + System.IO.Path.GetFileName(file) + "“. Bitte vor dem Import prüfen.\r\n" +
+                       "Kennwörter werden nie übernommen.",
+                ForeColor = Ui.Text,
+                BackColor = Ui.Back,
+                AutoSize = false,
+                UseMnemonic = false,
+                Location = new Point(pad, pad),
+                Size = new Size(inner, S(44))
+            };
+            Controls.Add(intro);
+
+            var sb = new System.Text.StringBuilder();
+            foreach (var d in devices)
+            {
+                sb.Append(exists(d.Name) ? "[vorhanden] " : "[neu] ").Append(d.Name);
+                if (d.Group.Length > 0) sb.Append("  (Gruppe ").Append(d.Group).Append(')');
+                sb.Append("\r\n    Adresse: ").Append(d.Host.Length > 0 ? d.Host : "–");
+                if (d.Macs.Count > 0) sb.Append("  ·  MAC: ").Append(string.Join(", ", d.Macs));
+                if (d.UseIpmi) sb.Append("\r\n    ⚠ IPMI: ").Append(d.IpmiHost.Length > 0 ? d.IpmiHost : "–").Append(d.IpmiUser.Length > 0 ? " (Benutzer " + d.IpmiUser + ")" : "");
+                if (d.ShutdownUser.Length > 0) sb.Append("\r\n    ⚠ Herunterfahren mit Benutzer ").Append(d.ShutdownUser);
+                sb.Append("\r\n");
+            }
+            var list = new ModernTextBox(k, true, 14) { Location = new Point(pad, intro.Bottom + S(8)), Width = inner };
+            list.Box.ReadOnly = true;
+            list.Box.WordWrap = true;
+            list.Text = sb.ToString();
+            Controls.Add(list);
+            int y = list.Bottom + S(12);
+
+            if (existing > 0)
+            {
+                _replace = new ModernCheck(existing + (existing == 1 ? " vorhandenes Gerät" : " vorhandene Geräte") + " mit gleichem Namen ersetzen (sonst überspringen)", k)
+                { Location = new Point(pad - S(2), y), Width = inner };
+                Controls.Add(_replace);
+                y += _replace.Height + S(6);
+            }
+            if (risky > 0)
+            {
+                _risky = new ModernCheck("IPMI- und Herunterfahren-Einstellungen übernehmen (⚠, " + risky + (risky == 1 ? " Gerät)" : " Geräte)"), k)
+                { Location = new Point(pad - S(2), y), Width = inner };
+                Controls.Add(_risky);
+                y += _risky.Height + S(6);
+                var hint = new Label
+                {
+                    Text = "Aus: Diese Geräte werden nur mit Wecken übernommen; IPMI und Herunterfahren bleiben aus.",
+                    ForeColor = Ui.Muted, BackColor = Ui.Back, AutoSize = false, UseMnemonic = false,
+                    Location = new Point(pad, y), Size = new Size(inner, S(20))
+                };
+                Controls.Add(hint);
+                y = hint.Bottom;
+            }
+            y += S(16);
+
+            var cancel = new ModernButton("Abbrechen", '\0', true, k) { DialogResult = DialogResult.Cancel, Margin = Padding.Empty };
+            var ok = new ModernButton("Importieren", '\0', false, k) { DialogResult = DialogResult.OK, Margin = Padding.Empty };
+            foreach (var b in new[] { cancel, ok }) { b.UpdateSize(); if (b.Width < S(110)) b.Width = S(110); Controls.Add(b); }
+            cancel.Location = new Point(W - pad - cancel.Width, y);
+            ok.Location = new Point(cancel.Left - S(8) - ok.Width, y);
+            AcceptButton = cancel; // Vorauswahl „Abbrechen“
+            CancelButton = cancel;
+            ClientSize = new Size(W, y + cancel.Height + pad);
+            Shown += (s, e) => cancel.Focus();
+            Theme.Apply(this);
+        }
+
+        private int S(float v) { return (int)Math.Round(v * k); }
+    }
+
     internal static class FolderPicker
     {
         public static string Pick(IWin32Window owner, string title, string initial = null)

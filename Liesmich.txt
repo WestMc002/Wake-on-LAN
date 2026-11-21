@@ -165,6 +165,11 @@ BEDIENUNG
                              Minuten erneut. Liegt das Programm unter
                              "Programme", fragt Windows bei jedem Update nach
                              Administratorrechten.
+                             Signatur: Jedes Release enthält neben dem ZIP ein
+                             vom Herausgeber signiertes Manifest mit der
+                             Prüfsumme. Wake on LAN installiert ein Update nur,
+                             wenn diese Signatur gültig ist; sonst bietet es
+                             nur die Release-Seite an.
                              Abgefragt wird nur die öffentliche
                              Release-Liste (api.github.com), ohne Anmeldung und
                              ohne persönliche Daten. Im Projektordner (mit
@@ -244,9 +249,10 @@ Zugriff von unterwegs:
     (nur mit HTTPS) und im Router den TCP-Port auf diesen PC weiterleiten;
     als Adresse den DynDNS-Namen aus dem Zertifikat eintragen. Das Passwort
     muss dann mindestens 12 Zeichen haben. Schutz: nach 5 falschen
-    Passwörtern (oder QR-Codes) ist eine Adresse 10 Minuten gesperrt; nach 15
-    Fehlversuchen in einer Stunde
-    (alle Adressen zusammen) wird die Anmeldung von außen 1 Stunde gesperrt,
+    Passwörtern (oder QR-Codes) ist eine Adresse 10 Minuten gesperrt; nach 10
+    Fehlversuchen in einer Stunde aus demselben Netz wird dieses Netz 30
+    Minuten gedrosselt, bei sehr vielen Fehlversuchen aus vielen Netzen nur
+    noch ein Versuch alle 30 Sekunden (nicht für Netze ohne Fehlversuche);
     im Heimnetz geht es weiter. Anmeldungen und Sperren stehen im Verlauf.
   Ohne diese Option nimmt die Seite nur Verbindungen aus dem Heimnetz bzw.
   per VPN an (private Adressen); Anfragen aus dem Internet werden sofort
@@ -295,6 +301,49 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.69.2026.1121 Sicherheit:
+                 - Updates: nur der passende Anhang des Releases, Prüfsumme
+                   (SHA-256) wird geprüft, nur EXE und Liesmich werden
+                   übernommen; mit Administratorrechten wird in einem
+                   geschützten Ordner gearbeitet, der Neustart läuft immer
+                   mit normalen Rechten
+                 - Import: ipmitool-Pfad und IPMI-Kennwörter werden nicht
+                   mehr aus Importdateien übernommen (Kennwortdatei nur aus
+                   dem gewählten Ordner); beim Ersetzen bleibt das Kennwort
+                   nur, wenn BMC-Adresse und Benutzer gleich sind
+                 - Steuerung per Handy: jedes Handy bekommt eine eigene
+                   Anmeldung (180 Tage gültig, "Abmelden" sperrt sie);
+                   strengere Prüfung der Anfragen, feste Zeitgrenzen,
+                   höchstens 8 Verbindungen je Gerät; Passwort stärker
+                   geschützt gespeichert; falsche Versuche aus dem Internet
+                   drosseln statt eine Stunde zu sperren.
+                   Angemeldete Handys müssen sich einmal neu anmelden.
+                 - nach erneuter Prüfung: Drosselung je Netz statt für alle
+                   gemeinsam; Abmeldungen werden sicher gespeichert;
+                   Windows-Kennwort fürs Herunterfahren wird beim Import
+                   nicht übernommen; Update auch bei umbenannter EXE;
+                   mit Administratorrechten keine Dateiarbeit mehr im
+                   Temp-Ordner; Anmeldeseite am Handy weist bei HTTP darauf
+                   hin, dass das Passwort im Netz mitgelesen werden kann
+                 - Updates nur noch signiert: das Release enthält ein
+                   signiertes Manifest; ohne gültige Signatur wird nichts
+                   installiert. Nur ein Update zur Zeit, eigener
+                   Arbeitsordner je Versuch, PowerShell nur aus dem
+                   Windows-Ordner
+                 - Geräteliste importieren: Vorschau aller Geräte vor dem
+                   Import (Vorauswahl "Abbrechen"); IPMI und Herunterfahren
+                   nur mit eigenem Schalter; Grenzen für Dateigröße und
+                   Anzahl; scheitert das Speichern, bleibt die alte Liste
+                 - Hinweisleiste "Neue Version" bei wenig Platz zweizeilig
+                 - dritte Prüfung: beim Import wird die zuletzt gefundene
+                   IP nicht übernommen, das Windows-Kennwort bleibt nur bei
+                   fest eingetragener, gleicher Adresse; scheitert das
+                   Speichern einer Abmeldung, meldet das Handy es und
+                   bleibt angemeldet (erneut versuchen); die gemeinsame
+                   Drosselung aus dem Internet trifft nur Netze mit
+                   falschen Versuchen
+                 - vierte Prüfung: die Liste der falschen Anmeldeversuche
+                   wird regelmäßig aufgeräumt und hat eine feste Obergrenze
   1.68.2026.1119 Hinweisleiste "Neue Version": Knöpfe ohne helle Ecken auf der
                  getönten Leiste
   1.67.2026.1118 Fußzeile: Abstand von Name und Website bei 100 % und 125 %

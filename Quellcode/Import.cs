@@ -73,15 +73,22 @@ namespace WakeOnLan
                     d.IpmiHost = bmc;
                     string v;
                     if (sets.TryGetValue("BENUTZER", out v)) d.IpmiUser = v;
-                    if (sets.TryGetValue("IPMITOOL", out v) && v.Length > 0) d.IpmiTool = v;
+                    // IPMITOOL wird nicht übernommen: das ausgeführte Programm kommt nur aus der lokalen Einstellung
+                    // (MainForm.LocalIpmiTool), nie aus einer importierten Datei
                     if (sets.TryGetValue("KENNWORTDATEI", out v) && v.Length > 0)
                     {
                         string pwFile = v.Replace("%~dp0", folder.TrimEnd('\\') + "\\");
                         try
                         {
-                            if (File.Exists(pwFile))
+                            // Kennwortdatei nur als normale Datei direkt im gewählten Importordner (kein anderer Pfad)
+                            string full = Path.GetFullPath(Path.Combine(folder, pwFile));
+                            bool inside = File.Exists(full)
+                                && string.Equals(Path.GetDirectoryName(full).TrimEnd('\\'), Path.GetFullPath(folder).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
+                                && (File.GetAttributes(full) & (FileAttributes.ReparsePoint | FileAttributes.Directory | FileAttributes.Device)) == 0
+                                && new FileInfo(full).Length < 4096;
+                            if (inside)
                             {
-                                string pw = File.ReadAllLines(pwFile, Encoding.Default).Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
+                                string pw = File.ReadAllLines(full, Encoding.Default).Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
                                 if (!string.IsNullOrEmpty(pw)) d.SetIpmiPassword(pw);
                             }
                         }

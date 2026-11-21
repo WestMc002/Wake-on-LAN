@@ -596,7 +596,7 @@ namespace WakeOnLan
                     try { _store.Save(); } catch { }
                     if (on && _update != null) TryAutoUpdate(); // schon eine neue Version bekannt: gleich versuchen
                 },
-                CanInstall = () => _update != null && !string.IsNullOrEmpty(_update.ZipUrl) && UpdateCheck.InstallBlocker() == null,
+                CanInstall = () => UpdateCheck.CanInstall(_update),
                 Install = () => Post(() => { var t = InstallUpdate(); }), // erst nach dem Schließen des Info-Fensters
                 OpenPage = OpenReleasePage
             };
@@ -608,6 +608,8 @@ namespace WakeOnLan
             string last = _store.UpdateLast == DateTime.MinValue ? "" : "Zuletzt geprüft " + _store.UpdateLast.ToString("dd.MM.yyyy");
             // Fehler (auch beim automatischen Installieren) vor „Version x verfügbar“: Kurzmeldung mit „Details“
             if (_updateError != null && _updateError.Kind == UpdateKind.Failed) return _updateError;
+            if (_update != null && _update.Problem != null)
+                return new UpdateStatus(UpdateKind.Available, "Version " + _update.Version + " verfügbar", _update.Problem) { More = _update.ProblemDetail ?? "" };
             if (_update != null) return new UpdateStatus(UpdateKind.Available, "Version " + _update.Version + " verfügbar", last);
             if (_updateError != null) return _updateError;
             if (_store.UpdateLast == DateTime.MinValue) return new UpdateStatus(UpdateKind.Unknown, "Noch nicht geprüft", "");
@@ -637,7 +639,7 @@ namespace WakeOnLan
                     _update = release;
                     ShowUpdateBar(true);
                     // „Automatisch aktualisieren“: ohne Rückfrage installieren, sobald nichts mehr läuft (nicht bei „Jetzt prüfen“)
-                    if (_store.UpdateAutoInstall && !manual && UpdateCheck.InstallBlocker() == null && !string.IsNullOrEmpty(release.ZipUrl))
+                    if (_store.UpdateAutoInstall && !manual && UpdateCheck.CanInstall(release))
                     {
                         Post(TryAutoUpdate);
                         return UpdateState();
@@ -681,8 +683,10 @@ namespace WakeOnLan
             {
                 _updateBar.Text = "Neue Version " + _update.Version + " verfügbar – installiert ist " + Ui.Version + ".";
                 string blocker = UpdateCheck.InstallBlocker();
-                _updateBar.Install.Enabled = blocker == null && !string.IsNullOrEmpty(_update.ZipUrl);
-                _tip.SetToolTip(_updateBar.Install, blocker ?? (string.IsNullOrEmpty(_update.ZipUrl) ? "Im Release ist keine ZIP-Datei angehängt." :
+                if (blocker == null && _update.Problem != null)
+                    blocker = "Wake on LAN installiert dieses Update nicht: " + _update.Problem + " " + _update.ProblemDetail + " Die Release-Seite ist trotzdem erreichbar.";
+                _updateBar.Install.Enabled = UpdateCheck.CanInstall(_update);
+                _tip.SetToolTip(_updateBar.Install, blocker ?? (string.IsNullOrEmpty(_update.ZipUrl) ? "Im Release ist keine passende ZIP-Datei." :
                     "ZIP herunterladen, Programm beenden, EXE und Liesmich ersetzen und neu starten.\r\nGeräteliste, Zeitpläne und Einstellungen bleiben erhalten."));
                 _tip.SetToolTip(_updateBar, string.IsNullOrEmpty(_update.Notes) ? "Die Änderungen stehen auf der Release-Seite." : "Änderungen:\r\n" + _update.Notes);
             }
@@ -723,7 +727,7 @@ namespace WakeOnLan
         private void TryAutoUpdate()
         {
             if (_update == null || _installing || _demo || !_store.UpdateAutoInstall || !_store.UpdateCheck) return;
-            if (UpdateCheck.InstallBlocker() != null || string.IsNullOrEmpty(_update.ZipUrl)) return;
+            if (!UpdateCheck.CanInstall(_update) || UpdateCheck.Busy) return;
             if (BusyForUpdate())
             {
                 if (!_autoUpdateHooked)
@@ -744,6 +748,19 @@ namespace WakeOnLan
         {
             if (_update == null || _installing) return;
             var info = _update;
+            if (!automatic && UpdateCheck.Busy)
+            {
+                MessageBox.Show(this, "Ein Update läuft bereits.", "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!automatic && !UpdateCheck.CanInstall(info))
+            {
+                string why = UpdateCheck.InstallBlocker() ?? (info.Problem != null ? "Wake on LAN installiert dieses Update nicht: " + info.Problem +
+                    (string.IsNullOrEmpty(info.ProblemDetail) ? "" : "\r\n\r\n" + info.ProblemDetail) : "Im Release ist keine passende ZIP-Datei.");
+                if (MessageBox.Show(this, why + "\r\n\r\nRelease-Seite auf GitHub öffnen?", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                    OpenReleasePage();
+                return;
+            }
             if (!automatic)
             {
                 string text = "Wake on LAN wird beendet, auf Version " + info.Version + " aktualisiert und neu gestartet.\r\n" +
@@ -1600,9 +1617,11 @@ namespace WakeOnLan
                     return;
                 }
                 int added = 0, skipped = 0;
+                string localTool = LocalIpmiTool();
                 foreach (var d in found)
                 {
                     if (_store.Find(d.Name) != null) { skipped++; continue; }
+                    d.IpmiTool = localTool; // ipmitool-Pfad nie aus dem Skript übernehmen
                     _store.Devices.Add(d);
                     added++;
                 }
@@ -1614,6 +1633,14 @@ namespace WakeOnLan
                 SaveAndRebuild();
                 SetMessage(summary + ": " + added + " übernommen" + (skipped > 0 ? ", " + skipped + " schon vorhanden" : "") + ".", Ui.Green);
             }
+        }
+
+        /// <summary>ipmitool-Pfad aus der lokalen Einstellung (erstes eigenes IPMI-Gerät mit vorhandenem Programm, sonst Standard).</summary>
+        private string LocalIpmiTool()
+        {
+            foreach (var d in _store.Devices)
+                if (!string.IsNullOrEmpty(d.IpmiTool) && System.IO.File.Exists(d.IpmiTool)) return d.IpmiTool;
+            return Device.DefaultIpmiTool;
         }
 
         private void SaveAndRebuild()
@@ -1829,6 +1856,17 @@ namespace WakeOnLan
         void IRemoteHost.Log(string text)
         {
             History.Add("Handy", text);
+        }
+
+        /// <summary>Prüfwert des Passworts beim Anmelden auf das neue Format umgestellt: im UI-Thread übernehmen und speichern.</summary>
+        void IRemoteHost.PinUpgraded(string oldHash, string newHash)
+        {
+            Post(() =>
+            {
+                if (_store.Remote.PinHash != oldHash) return; // inzwischen anderes Passwort gespeichert
+                _store.Remote.PinHash = newHash;
+                try { _store.Save(); } catch { }
+            });
         }
 
         private static string Answer(bool ok, string text)
@@ -2175,6 +2213,16 @@ namespace WakeOnLan
             using (var dlg = new OpenFileDialog { Title = "Geräteliste importieren", Filter = "Geräteliste (*.xml)|*.xml", CheckFileExists = true })
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                // fremde Datei: Größe begrenzen, erst vollständig lesen und prüfen, dann Vorschau
+                try
+                {
+                    if (new System.IO.FileInfo(dlg.FileName).Length > 2 * 1024 * 1024)
+                    {
+                        MessageBox.Show(this, "Die Datei ist zu groß für eine Geräteliste (höchstens 2 MB).", Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
+                catch { }
                 var other = new DeviceStore(dlg.FileName);
                 try { other.Load(); }
                 catch (Exception ex)
@@ -2183,32 +2231,76 @@ namespace WakeOnLan
                     return;
                 }
                 if (other.Devices.Count == 0) { SetMessage("Die Datei enthält keine Geräte.", Ui.Yellow); return; }
-                int existing = other.Devices.Count(x => _store.Find(x.Name) != null);
-                bool replace = false;
-                if (existing > 0)
+                if (other.Devices.Count > 1000)
                 {
-                    var answer = MessageBox.Show(this, existing + (existing == 1 ? " Gerät gibt" : " Geräte gibt") + " es schon (gleicher Name).\r\n\r\n" +
-                        "Ja: durch die importierten ersetzen\r\nNein: überspringen", Ui.AppName, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-                    if (answer == DialogResult.Cancel) return;
-                    replace = answer == DialogResult.Yes;
+                    MessageBox.Show(this, "Die Datei enthält zu viele Geräte (" + other.Devices.Count + ", höchstens 1000).", Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
                 }
+                int existing = other.Devices.Count(x => _store.Find(x.Name) != null);
+                bool replace, takeRisky;
+                using (var preview = new ImportPreview(dlg.FileName, other.Devices, n => _store.Find(n) != null))
+                {
+                    if (preview.ShowDialog(this) != DialogResult.OK) return;
+                    replace = preview.Replace;
+                    takeRisky = preview.TakeRisky;
+                }
+                // bisherigen Stand merken: scheitert das Speichern, wird er zurückgeholt
+                var before = _store.Devices.ToList();
+                var beforeOrder = _store.Groups();
                 int added = 0, replaced = 0;
+                string localTool = LocalIpmiTool();
                 foreach (var d in other.Devices)
                 {
                     var mine = _store.Find(d.Name);
+                    // Sicherheit: ein importiertes Kennwort und einen importierten ipmitool-Pfad nie übernehmen – das
+                    // gestartete Programm kommt nur aus der lokalen Einstellung, das Kennwort nur vom eigenen Gerät
+                    d.IpmiPasswordProtected = "";
+                    d.ShutdownPasswordProtected = ""; // ebenso das Windows-Kennwort fürs Herunterfahren
+                    // die zuletzt gefundene Adresse nie übernehmen: sie könnte das Ziel der Windows-Anmeldung bestimmen
+                    // (bei „IP automatisch“ wird sie neu gesucht)
+                    d.LastIp = "";
+                    if (!takeRisky)
+                    {
+                        // ohne Zustimmung: nur Wecken übernehmen, IPMI und Herunterfahren aus
+                        d.UseIpmi = false;
+                        d.IpmiHost = d.IpmiUser = "";
+                        d.ShutdownUser = "";
+                        d.AllowShutdown = false;
+                        if (d.Status == StatusMode.Ipmi) d.Status = StatusMode.Ping;
+                    }
+                    d.IpmiTool = mine != null ? mine.IpmiTool : localTool;
                     if (mine == null) { _store.Devices.Add(d); added++; continue; }
                     if (!replace) continue;
-                    // IPMI-Kennwort ist im Export nicht enthalten: vorhandenes behalten
-                    if (d.IpmiPasswordProtected.Length == 0) d.IpmiPasswordProtected = mine.IpmiPasswordProtected;
+                    // vorhandenes IPMI-Kennwort nur behalten, wenn BMC-Adresse und Benutzer gleich geblieben sind
+                    if (string.Equals(d.IpmiHost.Trim(), mine.IpmiHost.Trim(), StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(d.IpmiUser.Trim(), mine.IpmiUser.Trim(), StringComparison.OrdinalIgnoreCase))
+                        d.IpmiPasswordProtected = mine.IpmiPasswordProtected;
+                    // Windows-Kennwort nur behalten, wenn eine fest eingetragene Zieladresse und der Benutzer gleich
+                    // geblieben sind (ohne feste Adresse bestimmt die gesuchte IP das Ziel – dann neu eingeben)
+                    if (d.Host.Trim().Length > 0 && d.ShutdownUser.Trim().Length > 0
+                        && string.Equals(d.Host.Trim(), mine.Host.Trim(), StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(d.ShutdownUser.Trim(), mine.ShutdownUser.Trim(), StringComparison.OrdinalIgnoreCase))
+                        d.ShutdownPasswordProtected = mine.ShutdownPasswordProtected;
                     _store.Devices[_store.Devices.IndexOf(mine)] = d;
                     replaced++;
                 }
                 var order = _store.Groups();
                 foreach (string g in other.Groups()) if (!order.Any(x => Device.SameGroup(x, g))) order.Add(g);
                 _store.SetGroupOrder(order);
-                SaveAndRebuild();
+                try { _store.Save(); }
+                catch (Exception ex)
+                {
+                    // Speichern gescheitert: alten Stand zurückholen
+                    _store.Devices.Clear();
+                    _store.Devices.AddRange(before);
+                    _store.SetGroupOrder(beforeOrder);
+                    BuildRows();
+                    MessageBox.Show(this, "Der Import konnte nicht gespeichert werden; die bisherige Geräteliste bleibt.\r\n\r\n" + ex.Message, Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                BuildRows();
                 History.Add("Geräteliste", "importiert aus " + System.IO.Path.GetFileName(dlg.FileName) + ": " + added + " neu, " + replaced + " ersetzt");
-                SetMessage("Import: " + added + " neu, " + replaced + " ersetzt" + (existing - replaced > 0 ? ", " + (existing - replaced) + " übersprungen" : "") + ". IPMI-Kennwörter bei Bedarf neu eingeben.", Ui.Green);
+                SetMessage("Import: " + added + " neu, " + replaced + " ersetzt" + (existing - replaced > 0 ? ", " + (existing - replaced) + " übersprungen" : "") + ". Kennwörter (IPMI, Herunterfahren) bei Bedarf neu eingeben.", Ui.Green);
             }
         }
 
