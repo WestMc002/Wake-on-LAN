@@ -24,10 +24,19 @@ namespace WakeOnLan
 
         public static string FilePath { get { return Path.Combine(DeviceStore.DataFolder, "Verlauf.log"); } }
 
+        private static string Mask(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            var sb = new StringBuilder(s.Length);
+            foreach (char c in s) sb.Append(char.IsControl(c) || c == '\u2028' || c == '\u2029' ? ' ' : c);
+            return sb.ToString();
+        }
+
         public static void Add(string device, string text)
         {
             if (Disabled) return;
-            string line = DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss") + "\t" + device + "\t" + (text ?? "").Replace("\r", " ").Replace("\n", " ");
+            // Werte (z. B. Gerätenamen aus einer importierten Liste) maskieren: keine Zeilenumbrüche, Tabs oder Steuerzeichen
+            string line = DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss") + "\t" + Mask(device) + "\t" + Mask(text);
             lock (Sync)
             {
                 try

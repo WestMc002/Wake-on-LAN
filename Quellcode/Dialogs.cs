@@ -230,7 +230,8 @@ namespace WakeOnLan
             int pad = S(24), W = S(640), inner = W - 2 * pad;
 
             int existing = devices.Count(d => exists(d.Name));
-            int risky = devices.Count(d => d.UseIpmi || d.ShutdownUser.Length > 0);
+            // vorhandene Geräte behalten ihre lokalen IPMI- und Herunterfahren-Einstellungen: nur neue zählen als riskant
+            int risky = devices.Count(d => !exists(d.Name) && (d.UseIpmi || d.ShutdownUser.Length > 0));
             var intro = new Label
             {
                 Text = devices.Count + (devices.Count == 1 ? " Gerät" : " Geräte") + " in „" + System.IO.Path.GetFileName(file) + "“. Bitte vor dem Import prüfen.\r\n" +
@@ -251,8 +252,15 @@ namespace WakeOnLan
                 if (d.Group.Length > 0) sb.Append("  (Gruppe ").Append(d.Group).Append(')');
                 sb.Append("\r\n    Adresse: ").Append(d.Host.Length > 0 ? d.Host : "–");
                 if (d.Macs.Count > 0) sb.Append("  ·  MAC: ").Append(string.Join(", ", d.Macs));
-                if (d.UseIpmi) sb.Append("\r\n    ⚠ IPMI: ").Append(d.IpmiHost.Length > 0 ? d.IpmiHost : "–").Append(d.IpmiUser.Length > 0 ? " (Benutzer " + d.IpmiUser + ")" : "");
-                if (d.ShutdownUser.Length > 0) sb.Append("\r\n    ⚠ Herunterfahren mit Benutzer ").Append(d.ShutdownUser);
+                if (exists(d.Name))
+                {
+                    if (d.UseIpmi || d.ShutdownUser.Length > 0) sb.Append("\r\n    IPMI und Herunterfahren bleiben wie auf diesem PC");
+                }
+                else
+                {
+                    if (d.UseIpmi) sb.Append("\r\n    ⚠ IPMI: ").Append(d.IpmiHost.Length > 0 ? d.IpmiHost : "–").Append(d.IpmiUser.Length > 0 ? " (Benutzer " + d.IpmiUser + ")" : "");
+                    if (d.ShutdownUser.Length > 0) sb.Append("\r\n    ⚠ Herunterfahren mit Benutzer ").Append(d.ShutdownUser);
+                }
                 sb.Append("\r\n");
             }
             var list = new ModernTextBox(k, true, 14) { Location = new Point(pad, intro.Bottom + S(8)), Width = inner };
@@ -277,7 +285,7 @@ namespace WakeOnLan
                 y += _risky.Height + S(6);
                 var hint = new Label
                 {
-                    Text = "Aus: Diese Geräte werden nur mit Wecken übernommen; IPMI und Herunterfahren bleiben aus.",
+                    Text = "Aus: Neue Geräte werden nur mit Wecken übernommen; IPMI und Herunterfahren bleiben aus.",
                     ForeColor = Ui.Muted, BackColor = Ui.Back, AutoSize = false, UseMnemonic = false,
                     Location = new Point(pad, y), Size = new Size(inner, S(20))
                 };

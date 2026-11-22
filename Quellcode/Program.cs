@@ -41,13 +41,21 @@ namespace WakeOnLan
                 return Demo.RunScreenshots(outDir) ? 0 : 1;
             }
 
-            // Neustart durch das Update-Skript: wie ein normaler Start, das Fenster meldet das Ergebnis;
-            // "--nach-update /tray": war das Fenster vorher zu (automatisches Update), wieder nur im Infobereich starten
-            if (args.Length >= 1 && args.Length <= 2 && string.Equals(args[0], "--nach-update", StringComparison.OrdinalIgnoreCase))
+            // Neustart durch das Update-Skript: wie ein normaler Start, das Fenster meldet das Ergebnis.
+            // "--nach-update [<Kennung>] [/tray]": Kennung des Versuchs (32 Hex-Zeichen, ab 1.73; das Ergebnis steht in
+            // einer eigenen Datei je Versuch); /tray: war das Fenster vorher zu (automatisches Update), nur im Infobereich
+            if (args.Length >= 1 && args.Length <= 3 && string.Equals(args[0], "--nach-update", StringComparison.OrdinalIgnoreCase))
             {
                 MainForm.AfterUpdate = true;
-                bool tray = args.Length == 2 && (args[1].Equals("/tray", StringComparison.OrdinalIgnoreCase) || args[1].Equals("/hintergrund", StringComparison.OrdinalIgnoreCase));
-                args = tray ? new[] { "/hintergrund" } : new string[0];
+                bool tray = false, ok = true;
+                for (int i = 1; i < args.Length; i++)
+                {
+                    if (args[i].Equals("/tray", StringComparison.OrdinalIgnoreCase) || args[i].Equals("/hintergrund", StringComparison.OrdinalIgnoreCase)) tray = true;
+                    else if (i == 1 && UpdateCheck.IsAttemptId(args[i])) MainForm.UpdateAttemptId = args[i];
+                    else ok = false;
+                }
+                if (ok) args = tray ? new[] { "/hintergrund" } : new string[0];
+                else MainForm.AfterUpdate = false;
             }
 
             var store = new DeviceStore();

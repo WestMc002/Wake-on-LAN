@@ -306,6 +306,26 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.73.2026.1122 Selbst-Update nach den neuen Vorgaben (Vorlage Dock Pilot):
+                 - Wiederherstellungsjournal im neuen Format mit Plan,
+                   Prüfsumme jeder Sicherung und dauerhaftem Schreiben;
+                   ist es unvollständig oder widersprüchlich, wird nichts
+                   still aufgeräumt
+                 - Wiederherstellung prüft das ganze Journal vorher, hält
+                   dieselbe Sperre wie das Update und meldet nach einem
+                   Abbruch mittendrin "nicht abgeschlossen" statt Fehler
+                 - unter "Programme": Neustart-Helfer startet zuerst und
+                   bestätigt das Update, erst dann darf es Dateien ändern
+                 - Ergebnis je Update in einer eigenen Datei
+                 - Schreibprobe mit Zufallsnamen
+                 - Import der Geräteliste: doppelte Namen werden
+                   abgelehnt; vorhandene Geräte behalten ihre IPMI- und
+                   Herunterfahren-Einstellungen von diesem PC
+                 - ipmitool wird nur als .exe, nicht aus dem Netzwerk
+                   und nicht über Umleitungen gestartet; Firewall-Freigabe
+                   über feste Systempfade
+                 - Erstellen.bat bricht ab, wenn sie aus einer Sicherung
+                   gestartet wird
   1.72.2026.1122 Selbst-Update abgesichert (globale Vorgabe):
                  - Download begrenzt (Antwort von GitHub höchstens 1 MB,
                    ZIP höchstens so groß wie angegeben und nie über 64 MB)

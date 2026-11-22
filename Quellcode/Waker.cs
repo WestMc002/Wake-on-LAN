@@ -234,10 +234,34 @@ namespace WakeOnLan
         /// Startet ipmitool. Das Kennwort wird über die Umgebungsvariable IPMI_PASSWORD übergeben (Schalter -E),
         /// nicht auf der Befehlszeile. Rückgabe: Exit-Code, -1 wenn ipmitool nicht startet.
         /// </summary>
+        /// <summary>
+        /// Prüfung direkt vor dem Start eines fremden Programms (globale Vorgabe „Programmstarts“): nur eine .exe, kein
+        /// Netzwerkpfad und keine Umleitung (Reparse Point) im Pfad. null = in Ordnung, sonst der Grund.
+        /// </summary>
+        internal static string CheckProgram(string path)
+        {
+            try
+            {
+                string full = Path.GetFullPath(path);
+                if (!string.Equals(Path.GetExtension(full), ".exe", StringComparison.OrdinalIgnoreCase)) return "nur .exe-Dateien werden gestartet";
+                if (full.StartsWith(@"\\", StringComparison.Ordinal) || full.StartsWith("//", StringComparison.Ordinal)) return "liegt im Netzwerk";
+                string root = Path.GetPathRoot(full);
+                if (string.IsNullOrEmpty(root) || root.Length < 2 || root[1] != ':') return "ungewöhnlicher Pfad";
+                if (new DriveInfo(root).DriveType == DriveType.Network) return "liegt auf einem Netzlaufwerk";
+                // Datei und alle Ordner darüber: keine Verknüpfung bzw. Umleitung
+                for (string p = full; !string.IsNullOrEmpty(p) && p.Length > root.Length; p = Path.GetDirectoryName(p))
+                    if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0) return "der Pfad enthält eine Umleitung (Verknüpfung)";
+                return null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        }
+
         internal static int RunIpmi(Device d, string command, out string output)
         {
             output = "";
             if (!File.Exists(d.IpmiTool)) { output = "ipmitool nicht gefunden (" + d.IpmiTool + ")"; return -1; }
+            string why = CheckProgram(d.IpmiTool);
+            if (why != null) { output = "ipmitool nicht gestartet: " + why; return -1; }
             if (d.IpmiHost.Length == 0) { output = "keine BMC-Adresse"; return -1; }
             string pw = d.GetIpmiPassword();
             if (pw == null) { output = "kein Kennwort gespeichert (Gerät bearbeiten)"; return -1; }

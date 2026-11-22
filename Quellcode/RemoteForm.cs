@@ -1265,10 +1265,13 @@ namespace WakeOnLan
             string exe = Application.ExecutablePath;
             if (exe.IndexOfAny(new[] { '"', '&', '|', '<', '>', '^', '%' }) >= 0)
                 return "Der Programmpfad enthält Sonderzeichen – bitte die Freigabe von Hand anlegen (TCP-Port " + port + ").";
-            string inner = "netsh advfirewall firewall delete rule name=\"" + RuleName + "\" >nul 2>&1 & " +
-                "netsh advfirewall firewall add rule name=\"" + RuleName + "\" dir=in action=allow protocol=TCP localport=" + port +
+            // Systemprogramme nur über feste Pfade, nie über den Suchpfad
+            string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            string netsh = "\"" + Path.Combine(system, "netsh.exe") + "\"";
+            string inner = netsh + " advfirewall firewall delete rule name=\"" + RuleName + "\" >nul 2>&1 & " +
+                netsh + " advfirewall firewall add rule name=\"" + RuleName + "\" dir=in action=allow protocol=TCP localport=" + port +
                 " profile=private,domain program=\"" + exe + "\" enable=yes";
-            var psi = new ProcessStartInfo("cmd.exe", "/s /c \"" + inner + "\"")
+            var psi = new ProcessStartInfo(Path.Combine(system, "cmd.exe"), "/s /c \"" + inner + "\"")
             {
                 Verb = "runas",
                 UseShellExecute = true,

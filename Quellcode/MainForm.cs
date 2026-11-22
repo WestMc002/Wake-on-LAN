@@ -48,6 +48,8 @@ namespace WakeOnLan
         private readonly UpdateBar _updateBar;
         /// <summary>Neustart durch das Update-Skript (--nach-update): Ergebnis melden.</summary>
         public static bool AfterUpdate;
+        /// <summary>Versuchskennung aus „--nach-update &lt;Kennung&gt;“ (ab 1.73), sonst null: Ergebnis aus der Datei dieses Versuchs.</summary>
+        public static string UpdateAttemptId;
         private readonly System.Windows.Forms.Timer _navTimer = new System.Windows.Forms.Timer { Interval = 400 };
         private bool _navOpen;
 
@@ -548,7 +550,7 @@ namespace WakeOnLan
             if (AfterUpdate)
             {
                 // Neustart durch das Update-Skript: Ergebnis melden
-                string result = UpdateCheck.LastResult();
+                string result = UpdateCheck.LastResult(UpdateAttemptId);
                 if (result != null && result.StartsWith("OK"))
                 {
                     string v = result.Substring(2).Trim();
@@ -636,7 +638,8 @@ namespace WakeOnLan
             _updateRunning = true;
             try
             {
-                var release = await Task.Run(() => UpdateCheck.Latest());
+                // Reste unterbrochener Updates, bei denen nichts zurückzusetzen ist, still aufräumen (nur unter der Sperre)
+                var release = await Task.Run(() => { UpdateCheck.QuietCleanup(); return UpdateCheck.Latest(); });
                 _updateError = null;
                 _store.UpdateLast = DateTime.Now;
                 try { _store.Save(); } catch { }
@@ -763,6 +766,7 @@ namespace WakeOnLan
                 MessageBox.Show(this, "Ein Update läuft bereits.", "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            UpdateCheck.QuietCleanup();
             if (!automatic && UpdateCheck.RepairPending)
             {
                 // ein früheres Update wurde nicht abgeschlossen: erst die vorherige Version wiederherstellen
@@ -2257,6 +2261,13 @@ namespace WakeOnLan
                     MessageBox.Show(this, "Die Datei enthält zu viele Geräte (" + other.Devices.Count + ", höchstens 1000).", Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
+                // doppelte Namen (der Name ist die Kennung eines Geräts) schon vor der Vorschau ablehnen
+                var dup = other.Devices.GroupBy(x => x.Name.Trim(), StringComparer.OrdinalIgnoreCase).FirstOrDefault(gr => gr.Count() > 1);
+                if (dup != null)
+                {
+                    MessageBox.Show(this, "Die Datei enthält mehrere Geräte mit dem Namen „" + dup.Key + "“ und wird deshalb nicht importiert.", Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
                 int existing = other.Devices.Count(x => _store.Find(x.Name) != null);
                 bool replace, takeRisky;
                 using (var preview = new ImportPreview(dlg.FileName, other.Devices, n => _store.Find(n) != null))
@@ -2265,6 +2276,7 @@ namespace WakeOnLan
                     replace = preview.Replace;
                     takeRisky = preview.TakeRisky;
                 }
+                // Vorschau und Übernahme nutzen dieselbe geprüfte Liste (other.Devices), die Datei wird nicht neu gelesen.
                 // bisherigen Stand merken: scheitert das Speichern, wird er zurückgeholt
                 var before = _store.Devices.ToList();
                 var beforeOrder = _store.Groups();
@@ -2280,28 +2292,38 @@ namespace WakeOnLan
                     // die zuletzt gefundene Adresse nie übernehmen: sie könnte das Ziel der Windows-Anmeldung bestimmen
                     // (bei „IP automatisch“ wird sie neu gesucht)
                     d.LastIp = "";
-                    if (!takeRisky)
+                    if (mine == null)
                     {
-                        // ohne Zustimmung: nur Wecken übernehmen, IPMI und Herunterfahren aus
-                        d.UseIpmi = false;
-                        d.IpmiHost = d.IpmiUser = "";
-                        d.ShutdownUser = "";
-                        d.AllowShutdown = false;
-                        if (d.Status == StatusMode.Ipmi) d.Status = StatusMode.Ping;
+                        if (!takeRisky)
+                        {
+                            // ohne Zustimmung: nur Wecken übernehmen, IPMI und Herunterfahren aus
+                            d.UseIpmi = false;
+                            d.IpmiHost = d.IpmiUser = "";
+                            d.ShutdownUser = "";
+                            d.AllowShutdown = false;
+                        }
+                        d.IpmiTool = localTool;
+                        if (d.Status == StatusMode.Ipmi && !d.UseIpmi) d.Status = StatusMode.Ping;
+                        _store.Devices.Add(d);
+                        added++;
+                        continue;
                     }
-                    d.IpmiTool = mine != null ? mine.IpmiTool : localTool;
-                    if (mine == null) { _store.Devices.Add(d); added++; continue; }
                     if (!replace) continue;
-                    // vorhandenes IPMI-Kennwort nur behalten, wenn BMC-Adresse und Benutzer gleich geblieben sind
-                    if (string.Equals(d.IpmiHost.Trim(), mine.IpmiHost.Trim(), StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(d.IpmiUser.Trim(), mine.IpmiUser.Trim(), StringComparison.OrdinalIgnoreCase))
-                        d.IpmiPasswordProtected = mine.IpmiPasswordProtected;
-                    // Windows-Kennwort nur behalten, wenn eine fest eingetragene Zieladresse und der Benutzer gleich
-                    // geblieben sind (ohne feste Adresse bestimmt die gesuchte IP das Ziel – dann neu eingeben)
-                    if (d.Host.Trim().Length > 0 && d.ShutdownUser.Trim().Length > 0
-                        && string.Equals(d.Host.Trim(), mine.Host.Trim(), StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(d.ShutdownUser.Trim(), mine.ShutdownUser.Trim(), StringComparison.OrdinalIgnoreCase))
+                    // Gerät gibt es schon: die lokalen Aktionsfelder (IPMI, Herunterfahren samt Kennwörtern) bleiben wie
+                    // auf diesem PC; aus der Datei kommen nur Name, Gruppe, Adresse, MAC-Adressen und Anzeige-Einstellungen
+                    d.UseIpmi = mine.UseIpmi;
+                    d.IpmiHost = mine.IpmiHost;
+                    d.IpmiUser = mine.IpmiUser;
+                    d.IpmiTool = mine.IpmiTool;
+                    d.IpmiPasswordProtected = mine.IpmiPasswordProtected;
+                    d.AllowShutdown = mine.AllowShutdown;
+                    d.ShutdownUser = mine.ShutdownUser;
+                    // Windows-Kennwort nur behalten, wenn die fest eingetragene Zieladresse gleich geblieben ist und keine
+                    // automatische Adresssuche dazukommt (sonst bestimmt eine andere Adresse das Ziel der Anmeldung)
+                    if (d.Host.Trim().Length > 0 && d.AutoIp == mine.AutoIp
+                        && string.Equals(d.Host.Trim(), mine.Host.Trim(), StringComparison.OrdinalIgnoreCase))
                         d.ShutdownPasswordProtected = mine.ShutdownPasswordProtected;
+                    if (d.Status == StatusMode.Ipmi && !d.UseIpmi) d.Status = StatusMode.Ping;
                     _store.Devices[_store.Devices.IndexOf(mine)] = d;
                     replaced++;
                 }

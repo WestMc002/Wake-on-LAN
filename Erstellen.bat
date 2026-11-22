@@ -6,12 +6,13 @@ ECHO #                                     #
 ECHO #  Autor: Guenther Schoder            #
 ECHO #         www.westmc002.de            #
 ECHO #                                     #
-ECHO #  Datum: 01.11.2026 / 21.11.2026     #
+ECHO #  Datum: 01.11.2026 / 22.11.2026     #
 ECHO #######################################
 ECHO.
 
 CD /D "%~dp0"
 SET "RESULT=0"
+FOR %%I IN ("%CD%\..") DO IF /I "%%~nxI"=="Backup" GOTO :ERR_INBACKUP
 
 REM Einstellungen (projektspezifisch anpassen, Platzhalter in [ ] ersetzen)
 REM MAJOR     = Hauptversion
@@ -132,6 +133,12 @@ ECHO Sichere nach %BAKDIR% ...
 ROBOCOPY "%CD%" "%CD%\%BAKDIR%" /E /XD "%CD%\Backup" "%CD%\Release" /XF "%NEWEXE%" "Erstellen.log" /R:1 /W:1 /NFL /NDL /NJH /NJS /NP >NUL
 IF ERRORLEVEL 8 GOTO :ERR_SNAPSHOT
 ECHO Gesichert.
+GOTO :Ende
+
+:ERR_INBACKUP
+COLOR C0
+SET "RESULT=1"
+ECHO Fehler: Diese Erstellen.bat liegt in einer Sicherung - bitte die im Projektordner starten.
 GOTO :Ende
 
 :ERR_CSC
