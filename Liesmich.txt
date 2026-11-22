@@ -170,6 +170,11 @@ BEDIENUNG
                              Prüfsumme. Wake on LAN installiert ein Update nur,
                              wenn diese Signatur gültig ist; sonst bietet es
                              nur die Release-Seite an.
+                             Läuft Wake on LAN gerade mit Administratorrechten,
+                             wird nicht aktualisiert - bitte normal starten.
+                             Wurde ein Update unterbrochen (z. B. Absturz oder
+                             Stromausfall), bietet "Jetzt aktualisieren" an,
+                             die vorherige Version wiederherzustellen.
                              Abgefragt wird nur die öffentliche
                              Release-Liste (api.github.com), ohne Anmeldung und
                              ohne persönliche Daten. Im Projektordner (mit
@@ -301,6 +306,22 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.72.2026.1122 Selbst-Update abgesichert (globale Vorgabe):
+                 - Download begrenzt (Antwort von GitHub höchstens 1 MB,
+                   ZIP höchstens so groß wie angegeben und nie über 64 MB)
+                 - kein Update, solange Wake on LAN mit
+                   Administratorrechten läuft
+                 - Update-Skript als Datei mit geprüfter Prüfsumme, nur
+                   ein kurzer Lader auf der Befehlszeile
+                 - EXE und Liesmich werden direkt aus dem geprüften ZIP
+                   in eine Hilfsdatei geschrieben und dann in einem
+                   Schritt ersetzt; Journal und Rücksicherung je Datei
+                 - unterbrochenes Update: wurde nichts verändert, wird
+                   still aufgeräumt, sonst bietet "Jetzt aktualisieren"
+                   die Wiederherstellung der vorherigen Version an
+                 - Neustart erst nach bestätigtem Ende des Updates;
+                   Meldung bei Fehlern kurz und ohne Technik
+                   (Einzelheiten im Verlauf)
   1.69.2026.1121 Sicherheit:
                  - Updates: nur der passende Anhang des Releases, Prüfsumme
                    (SHA-256) wird geprüft, nur EXE und Liesmich werden

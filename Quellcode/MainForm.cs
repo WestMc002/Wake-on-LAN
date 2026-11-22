@@ -557,11 +557,18 @@ namespace WakeOnLan
                     if (!Visible && _notifier != null) _notifier.Show(Ui.AppName, "Update auf Version " + v + " installiert.", ToolTipIcon.Info);
                     History.Add("Wake on LAN", "Update auf Version " + v + " installiert");
                 }
+                else if (result != null && result.StartsWith("ZURUECK"))
+                {
+                    SetMessage("Vorherige Version wiederhergestellt – das Update kann jetzt erneut installiert werden.", Ui.Green);
+                    if (!Visible && _notifier != null) _notifier.Show(Ui.AppName, "Vorherige Version wiederhergestellt.", ToolTipIcon.Info);
+                    History.Add("Wake on LAN", "Vorherige Version wiederhergestellt");
+                }
                 else if (result != null)
                 {
-                    string why = result.Replace("FEHLER", "").Trim();
-                    SetMessage("Update fehlgeschlagen: " + why + " – die bisherige Version läuft weiter.", Ui.Red);
-                    History.Add("Wake on LAN", "Update fehlgeschlagen: " + why);
+                    // kurze, verständliche Meldung ohne Pfade und Technik; der Originaltext steht im Verlauf
+                    History.Add("Wake on LAN", "Update nicht installiert: " + result);
+                    SetMessage("Update nicht installiert – die bisherige Version läuft weiter. Einzelheiten stehen im Verlauf.", Ui.Red);
+                    if (!Visible && _notifier != null) _notifier.Show(Ui.AppName, "Update nicht installiert – die bisherige Version läuft weiter.", ToolTipIcon.Warning);
                 }
             }
             // still kurz nach jedem Start (ca. 15 s, auch wenn das Programm nur im Infobereich startet), beim Start ohne
@@ -596,7 +603,7 @@ namespace WakeOnLan
                     try { _store.Save(); } catch { }
                     if (on && _update != null) TryAutoUpdate(); // schon eine neue Version bekannt: gleich versuchen
                 },
-                CanInstall = () => UpdateCheck.CanInstall(_update),
+                CanInstall = () => UpdateCheck.CanInstall(_update) || (_update != null && UpdateCheck.RepairPending),
                 Install = () => Post(() => { var t = InstallUpdate(); }), // erst nach dem Schließen des Info-Fensters
                 OpenPage = OpenReleasePage
             };
@@ -685,7 +692,10 @@ namespace WakeOnLan
                 string blocker = UpdateCheck.InstallBlocker();
                 if (blocker == null && _update.Problem != null)
                     blocker = "Wake on LAN installiert dieses Update nicht: " + _update.Problem + " " + _update.ProblemDetail + " Die Release-Seite ist trotzdem erreichbar.";
-                _updateBar.Install.Enabled = UpdateCheck.CanInstall(_update);
+                // nicht abgeschlossenes Update: „Jetzt aktualisieren“ bietet die Wiederherstellung an
+                bool repair = blocker == UpdateCheck.PendingText;
+                _updateBar.Install.Enabled = UpdateCheck.CanInstall(_update) || repair;
+                if (repair) blocker += " Ein Klick stellt die vorherige Version wieder her.";
                 _tip.SetToolTip(_updateBar.Install, blocker ?? (string.IsNullOrEmpty(_update.ZipUrl) ? "Im Release ist keine passende ZIP-Datei." :
                     "ZIP herunterladen, Programm beenden, EXE und Liesmich ersetzen und neu starten.\r\nGeräteliste, Zeitpläne und Einstellungen bleiben erhalten."));
                 _tip.SetToolTip(_updateBar, string.IsNullOrEmpty(_update.Notes) ? "Die Änderungen stehen auf der Release-Seite." : "Änderungen:\r\n" + _update.Notes);
@@ -753,6 +763,17 @@ namespace WakeOnLan
                 MessageBox.Show(this, "Ein Update läuft bereits.", "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            if (!automatic && UpdateCheck.RepairPending)
+            {
+                // ein früheres Update wurde nicht abgeschlossen: erst die vorherige Version wiederherstellen
+                if (UpdateCheck.OfferRepair(this, !Visible))
+                {
+                    History.Add("Wake on LAN", "Vorherige Version wird wiederhergestellt");
+                    _exit = true; // das Skript wartet auf das Programmende und startet danach neu
+                    Close();
+                }
+                return;
+            }
             if (!automatic && !UpdateCheck.CanInstall(info))
             {
                 string why = UpdateCheck.InstallBlocker() ?? (info.Problem != null ? "Wake on LAN installiert dieses Update nicht: " + info.Problem +
@@ -788,7 +809,7 @@ namespace WakeOnLan
                     _updateError = UpdateStatus.FromError(ex);
                     _updateBar.Text = barText;
                     foreach (var b in new[] { _updateBar.Page, _updateBar.Later }) b.Enabled = true;
-                    _updateBar.Install.Enabled = UpdateCheck.InstallBlocker() == null;
+                    _updateBar.Install.Enabled = UpdateCheck.CanInstall(info) || UpdateCheck.RepairPending;
                     _installing = false;
                     History.Add("Wake on LAN", "Automatisches Update fehlgeschlagen: " + ex.Message);
                     return;
@@ -797,7 +818,7 @@ namespace WakeOnLan
                 _updateBar.Text = barText;
                 _updateBar.Page.Enabled = true;
                 _updateBar.Later.Enabled = true;
-                _updateBar.Install.Enabled = UpdateCheck.InstallBlocker() == null;
+                _updateBar.Install.Enabled = UpdateCheck.CanInstall(info) || UpdateCheck.RepairPending;
                 _installing = false;
             }
         }
