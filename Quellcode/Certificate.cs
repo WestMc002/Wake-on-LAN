@@ -31,6 +31,50 @@ namespace WakeOnLan
         public const string TestKeyName = "Wake on LAN HTTPS (Prüfung)";
         private static readonly object ImportLock = new object();
 
+        /// <summary>Hinweis, wenn eine Zertifikatsdatei nicht automatisch gelesen wird.</summary>
+        public const string NotLocalText = "Das Zertifikat liegt im Netzwerk oder hinter einer Umleitung (z. B. OneDrive) und wird deshalb nicht automatisch geladen. Bitte unter „Steuerung per Handy“ auf „Speichern“ klicken oder das Zertifikat in einen lokalen Ordner legen.";
+
+        /// <summary>
+        /// Darf die Datei ohne ausdrückliche Auswahl gelesen werden (Programmstart, Neuladen, Prüfung beim Öffnen)?
+        /// true = lokal und ohne Umleitung (Verknüpfung, Abzweigung, Bereitstellungspunkt, Cloud-Platzhalter wie OneDrive);
+        /// eine fehlende Datei gilt als lokal (das Laden meldet dann den Fehler). Jeder Pfadteil wird von der Wurzel an
+        /// geprüft, ohne einer Umleitung zu folgen; Netzwerkpfade werden ohne Zugriff auf das Netz erkannt. Im Zweifel false.
+        /// Referenz: RDP Pilot ab 1.58 (RdpFile.SafeToTouch).
+        /// </summary>
+        public static bool SafeToTouch(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return true;
+            try
+            {
+                if (path.StartsWith(@"\\?\", StringComparison.Ordinal))
+                {
+                    string rest = path.Substring(4);
+                    if (rest.Length >= 3 && char.IsLetter(rest[0]) && rest[1] == ':' && rest[2] == '\\') path = rest;
+                    else return false;
+                }
+                if (path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal)) return false;
+                if (path.StartsWith("file:", StringComparison.OrdinalIgnoreCase)) return false;
+                string full = Path.GetFullPath(path);
+                string root = Path.GetPathRoot(full);
+                if (string.IsNullOrEmpty(root) || root.Length != 3 || root[1] != ':') return false;
+                // fail-closed: Abfragefehler, unbekannter Typ oder fehlendes Laufwerk gelten wie ein Netzwerkpfad
+                DriveType type = new DriveInfo(root.Substring(0, 1)).DriveType;
+                if (type == DriveType.Network || type == DriveType.Unknown || type == DriveType.NoRootDirectory) return false;
+                string current = root;
+                foreach (string part in full.Substring(root.Length).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    current = Path.Combine(current, part);
+                    FileAttributes attributes;
+                    try { attributes = File.GetAttributes(current); }
+                    catch (FileNotFoundException) { return true; }
+                    catch (DirectoryNotFoundException) { return true; }
+                    if ((attributes & FileAttributes.ReparsePoint) != 0) return false;
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
         public static bool IsPfx(string file)
         {
             string ext = Path.GetExtension(file ?? "").ToLowerInvariant();

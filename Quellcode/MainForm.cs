@@ -1746,7 +1746,7 @@ namespace WakeOnLan
 
         /// <summary>Webserver nach den Einstellungen (neu) starten; Zertifikat laden kann dauern -> im Hintergrund.</summary>
         /// <summary>Startet den Webserver im Hintergrund neu; done (optional) bekommt danach den Fehler bzw. null.</summary>
-        private void StartRemote(Action<string> done = null)
+        private void StartRemote(Action<string> done = null, bool chosen = false)
         {
             int generation = ++_webGeneration;
             if (_web != null) { _web.Dispose(); _web = null; }
@@ -1758,7 +1758,7 @@ namespace WakeOnLan
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 string error = null;
-                try { server.Start(); }
+                try { server.Start(chosen); }
                 catch (Exception ex) { error = ex.Message; }
                 Post(() =>
                 {
@@ -1812,7 +1812,7 @@ namespace WakeOnLan
                     UpdateTray();
                     string text = _store.Remote.Enabled ? "Gespeichert – Steuerung per Handy: " + _store.Remote.Url(_store.Remote.Address) : "Gespeichert – Steuerung per Handy ausgeschaltet.";
                     report(Tuple.Create(_web != null, saveError ?? startError, text));
-                });
+                }, true);
             };
             ShowView(_navRemote, f, null);
         }

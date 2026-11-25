@@ -395,6 +395,8 @@ namespace WakeOnLan
         private readonly object _certLock = new object();
         private X509Certificate2 _cert;
         private DateTime _certTime, _keyTime, _lastCertCheck;
+        /// <summary>Zertifikatsdateien lokal und ohne Umleitung: nur dann automatisch nachladen.</summary>
+        private bool _certLocal = true;
 
         private readonly Dictionary<string, int> _perIp = new Dictionary<string, int>();
         private readonly object _failLock = new object();
@@ -477,16 +479,24 @@ namespace WakeOnLan
             get { return DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastRequest) < TimeSpan.FromMinutes(2).Ticks; }
         }
 
-        /// <summary>Server starten. Fehler (Port belegt, Zertifikat) werden als Ausnahme mit verständlichem Text gemeldet.</summary>
-        public void Start()
+        /// <summary>
+        /// Server starten. Fehler (Port belegt, Zertifikat) werden als Ausnahme mit verständlichem Text gemeldet.
+        /// chosen = ausdrücklich gestartet („Speichern“): Nur dann wird eine Zertifikatsdatei im Netzwerk oder hinter
+        /// einer Umleitung gelesen; beim Programmstart nicht (globale Vorgabe „Automatische Dateizugriffe“).
+        /// </summary>
+        public void Start(bool chosen = false)
         {
             if (_token == null || !_settings.HasPin) throw new InvalidOperationException("Bitte zuerst ein Passwort festlegen.");
             if (_settings.Https)
             {
+                _certLocal = _settings.CertFromStore || (CertLoader.SafeToTouch(_settings.CertFile) && CertLoader.SafeToTouch(_settings.KeyFile));
+                if (!_certLocal && !chosen) throw new InvalidOperationException(CertLoader.NotLocalText);
                 _cert = _settings.LoadCertificate();
-                _certTime = Stamp(_settings.CertFile);
-                _keyTime = Stamp(_settings.KeyFile);
+                // erneuerte Dateien nur bei lokalen Pfaden ohne Umleitung automatisch nachladen
+                _certTime = _certLocal ? Stamp(_settings.CertFile) : DateTime.MinValue;
+                _keyTime = _certLocal ? Stamp(_settings.KeyFile) : DateTime.MinValue;
                 _lastCertCheck = DateTime.UtcNow;
+                if (!_certLocal) _host.Log("Zertifikat liegt im Netzwerk oder hinter einer Umleitung: wird nicht automatisch neu geladen und beim nächsten Programmstart nicht automatisch geladen.");
             }
             try
             {
@@ -558,7 +568,7 @@ namespace WakeOnLan
                     }
                     return _cert;
                 }
-                if ((DateTime.UtcNow - _lastCertCheck).TotalSeconds >= 30)
+                if (_certLocal && (DateTime.UtcNow - _lastCertCheck).TotalSeconds >= 30)
                 {
                     _lastCertCheck = DateTime.UtcNow;
                     DateTime c = Stamp(_settings.CertFile), k = Stamp(_settings.KeyFile);

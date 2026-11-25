@@ -236,7 +236,17 @@ namespace WakeOnLan
             else
             {
                 CheckFirewall();
-                if (_r.Https && (_r.CertFromStore ? _r.CertName.Length > 0 : _r.CertFile.Length > 0)) Shown += (s, e) => CheckCertificate();
+                // beim Öffnen nur lokale Dateien ohne Umleitung prüfen (globale Vorgabe „Automatische Dateizugriffe“)
+                if (_r.Https && _r.CertFromStore && _r.CertName.Length > 0) Shown += (s, e) => CheckCertificate();
+                else if (_r.Https && !_r.CertFromStore && _r.CertFile.Length > 0)
+                {
+                    if (CertLoader.SafeToTouch(_r.CertFile) && CertLoader.SafeToTouch(_r.KeyFile)) Shown += (s, e) => CheckCertificate();
+                    else
+                    {
+                        _certStatus.ForeColor = Ui.Muted;
+                        _certStatus.Text = "Liegt im Netzwerk oder hinter einer Umleitung – wird nur mit „Prüfen und übernehmen“ bzw. „Speichern“ gelesen.";
+                    }
+                }
             }
             Theme.Apply(this);
         }
@@ -1239,10 +1249,28 @@ namespace WakeOnLan
             return false;
         }
 
-        /// <summary>Weitere Firewall-Programme laut Windows-Sicherheitscenter (z. B. ESET), ohne die Windows-Firewall.</summary>
+        /// <summary>
+        /// Weitere bei Windows registrierte Firewall-Programme (z. B. ESET), ohne die Windows-Firewall: zuerst über
+        /// HNetCfg.FwProducts (globale Vorgabe „Firewall-Anzeige“), zusätzlich über das Windows-Sicherheitscenter.
+        /// </summary>
         public static List<string> OtherFirewalls()
         {
             var names = new List<string>();
+            try
+            {
+                Type p = Type.GetTypeFromProgID("HNetCfg.FwProducts");
+                if (p != null)
+                {
+                    dynamic products = Activator.CreateInstance(p);
+                    int count = products.Count;
+                    for (int i = 0; i < count && i < 32; i++)
+                    {
+                        string name = products.Item(i).DisplayName;
+                        if (!string.IsNullOrEmpty(name) && name.IndexOf("Windows", StringComparison.OrdinalIgnoreCase) < 0 && !names.Contains(name)) names.Add(name);
+                    }
+                }
+            }
+            catch { }
             try
             {
                 Type t = Type.GetTypeFromProgID("WbemScripting.SWbemLocator");

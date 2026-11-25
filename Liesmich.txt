@@ -243,10 +243,14 @@ Verschlüsselung (HTTPS): Zertifikat z. B. von Let's Encrypt – entweder aus de
   Am besten die Datei mit der ganzen Kette (fullchain); sonst lädt Windows die
   Zwischenzertifikate nach. Der Name im Zertifikat muss zur "Adresse für das
   Handy" passen. Ein erneuertes Zertifikat (gleiche Datei) übernimmt das
-  Programm automatisch, ohne Neustart. Ruft jemand die Seite mit http:// auf,
-  wird auf https:// umgeleitet. Im Heimnetz muss der Name auf diesen PC bzw.
-  den Router zeigen (z. B. Fritzbox: Portfreigabe gilt auch im Heimnetz, oder
-  lokaler DNS-Eintrag).
+  Programm automatisch, ohne Neustart. Liegt die Zertifikatsdatei im Netzwerk
+  oder hinter einer Umleitung (z. B. OneDrive), liest Wake on LAN sie nicht
+  von selbst: Beim Programmstart startet die Handy-Steuerung dann nicht (bitte
+  "Speichern" klicken oder die Datei in einen lokalen Ordner legen), und ein
+  erneuertes Zertifikat wird nicht automatisch übernommen. Ruft jemand die
+  Seite mit http:// auf, wird auf https:// umgeleitet. Im Heimnetz muss der
+  Name auf diesen PC bzw. den Router zeigen (z. B. Fritzbox: Portfreigabe gilt
+  auch im Heimnetz, oder lokaler DNS-Eintrag).
 
 Zugriff von unterwegs:
   - Per VPN ins Heimnetz (z. B. Fritzbox/WireGuard): nichts weiter nötig.
@@ -306,6 +310,25 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.75.2026.1125 Selbst-Update und Sicherheit nach den Vorgaben vom 25.11.:
+                 - Update und Wiederherstellung auf dem Stand von
+                   RDP Pilot 1.59; Steuerdateien werden begrenzt gelesen
+                 - kehrt eine Wiederherstellung zu einer Version vor 1.73
+                   zurück, zeigt der Neustart-Helfer das Ergebnis selbst an
+                 - lässt sich der Update-Prozess nur über seine Nummer
+                   verfolgen (UAC mit anderem Administratorkonto), wird
+                   nach 2 Minuten ohne Ergebnis nicht neu gestartet; der
+                   Arbeitsordner bleibt, bis das Ende belegt ist
+                 - Ergebnis je Versuch im Arbeitsordner, Neustart-Helfer
+                   erkennt das Update zusätzlich an der Startzeit
+                 - ein offenes Update aus Version 1.72 (ohne Prüfsummen)
+                   wird mit Administratorrechten nicht zurückgesetzt,
+                   stattdessen Hinweis auf Neuinstallation
+                 - ipmitool: unbekannte Laufwerke gelten wie Netzwerk
+                 - Firewall-Hinweis nennt auch andere Firewalls (z. B.
+                   ESET) mit dem freizugebenden Port
+                 - Zertifikat für HTTPS im Netzwerk oder hinter einer
+                   Umleitung wird nicht automatisch geladen
   1.73.2026.1122 Selbst-Update nach den neuen Vorgaben (Vorlage Dock Pilot):
                  - Wiederherstellungsjournal im neuen Format mit Plan,
                    Prüfsumme jeder Sicherung und dauerhaftem Schreiben;

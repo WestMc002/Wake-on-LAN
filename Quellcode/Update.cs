@@ -428,7 +428,7 @@ namespace WakeOnLan
         }
 
         /// <summary>
-        /// Selbst-Update nach globaler Vorgabe (Referenz Dock Pilot 1.73 bzw. RDP Pilot 1.57): ZIP begrenzt in einen eigenen Arbeitsordner laden,
+        /// Selbst-Update nach globaler Vorgabe (Referenz RDP Pilot 1.59): ZIP begrenzt in einen eigenen Arbeitsordner laden,
         /// SHA-256 aus dem signierten Manifest prüfen, Update-Skript als Datei ablegen und über einen kurzen Lader starten, der
         /// die Prüfsumme des Skripts kontrolliert. Das Skript prüft die Signatur des Manifests selbst, tauscht nur EXE und
         /// Liesmich atomar aus (Journal, Rücksicherung) und arbeitet erhöht nur in einem geschützten Ordner unter %ProgramData%.
@@ -566,7 +566,6 @@ namespace WakeOnLan
             Var(vars, "TargetId", TargetId);
             Var(vars, "TempRoot", Folder);
             Var(vars, "Log", logFile);
-            Var(vars, "SharedLog", "");
             vars.Append("$LegacyFallback = $false\n");
             Var(vars, "AttemptId", attemptId);
             Var(vars, "ReleaseId", attemptId);
@@ -646,8 +645,7 @@ namespace WakeOnLan
             until = DateTime.UtcNow.AddSeconds(30);
             while (true)
             {
-                string ack = null;
-                try { if (File.Exists(ackFile)) ack = File.ReadAllText(ackFile).Trim(); } catch { }
+                string ack = ReadSmall(ackFile);
                 if (ack == id.ToString(CultureInfo.InvariantCulture)) break;
                 bool exited = true;
                 try { exited = helper.HasExited; } catch { }
@@ -660,6 +658,26 @@ namespace WakeOnLan
             // Freigabe zuletzt: fehlt sie, bricht das erhöhte Skript nach dem Programmende ohne Änderung ab
             if (!WriteStartFile(releaseFile, attemptId)) throw new Exception(failed);
             GC.KeepAlive(elevatedProcess);
+        }
+
+        /// <summary>
+        /// Steuerdatei aus dem Temp-Ordner einmal öffnen und aus demselben Stream höchstens 257 Bytes lesen; mehr als
+        /// 256 Bytes oder nicht lesbar = ungültig (null). Nicht erst die Größe prüfen und dann erneut öffnen.
+        /// </summary>
+        private static string ReadSmall(string file)
+        {
+            try
+            {
+                using (var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    var buf = new byte[257];
+                    int n = 0, k;
+                    while (n < 257 && (k = fs.Read(buf, n, 257 - n)) > 0) n += k;
+                    if (n > 256) return null;
+                    return Encoding.ASCII.GetString(buf, 0, n).Trim();
+                }
+            }
+            catch { return null; }
         }
 
         private static bool WriteStartFile(string file, string text)
@@ -691,7 +709,6 @@ namespace WakeOnLan
             Var(r, "StartFile", startFile);
             Var(r, "ReadyFile", readyFile);
             Var(r, "AckFile", ackFile);
-            Var(r, "SharedLog", string.IsNullOrEmpty(attempt) ? LogFile : "");
             r.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
             return Process.Start(PowerShell(r + RestartScript));
         }
@@ -945,6 +962,35 @@ namespace WakeOnLan
         /// Nicht abgeschlossenes Update: nachfragen und die vorherige Version wiederherstellen (Wake on LAN wird dazu
         /// beendet und danach neu gestartet). true = Wiederherstellung läuft, Wake on LAN soll sich beenden.
         /// </summary>
+        /// <summary>Arbeitsordner direkt unter ProgramData (geschützter Ordner eines Updates mit Administratorrechten)?</summary>
+        private static bool IsProtectedDir(string dir)
+        {
+            string data = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            return string.Equals(Path.GetDirectoryName(dir), data, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Altformat 1.72 (Merker nur Alt-Ordner, Journal ohne „Bereit“, Sicherungen ohne Prüfsumme): Die Sicherungen lassen
+        /// sich nicht gegen eine Prüfsumme prüfen. Liegt es in einem geschützten Arbeitsordner unter ProgramData, wird mit
+        /// Administratorrechten nichts zurückgesetzt, sondern auf die Neuinstallation hingewiesen. Im Zweifel (Journal nicht
+        /// lesbar) false: dann entscheidet die normale Prüfung (OFFEN). Referenz: RDP Pilot 1.59.
+        /// </summary>
+        private static bool LegacyWithoutHash(string dir)
+        {
+            try
+            {
+                if (ReadMarker(dir) != MarkerKind.Legacy) return false;
+                string journal = Path.Combine(dir, "Wiederherstellung.txt");
+                if (!File.Exists(journal) || new FileInfo(journal).Length > 64 * 1024) return false;
+                return Array.IndexOf(File.ReadAllLines(journal, Encoding.UTF8), "Bereit") < 0;
+            }
+            catch { return false; }
+        }
+
+        public const string ReinstallText = PendingText + " Es stammt von einer älteren Version, deren Sicherungen keine Prüfsumme haben. " +
+            "Mit Administratorrechten setzt Wake on LAN sie deshalb nicht automatisch zurück.\n\n" +
+            "Bitte die aktuelle Version von der Download-Seite laden und neu installieren.";
+
         public static bool OfferRepair(IWin32Window owner, bool tray)
         {
             // im Projektordner (Erstellen.bat neben der EXE) wird nie etwas zurückgesetzt, wie beim Update
@@ -965,6 +1011,13 @@ namespace WakeOnLan
             string dir = PendingRestore();
             if (dir == null) return false;
             History.Add("Wake on LAN", "Nicht abgeschlossenes Update gefunden: " + dir);
+            if (IsProtectedDir(dir) && LegacyWithoutHash(dir))
+            {
+                History.Add("Wake on LAN", "Altes Journal ohne Prüfsummen im geschützten Arbeitsordner, keine Wiederherstellung: " + dir);
+                if (MessageBox.Show(owner, ReinstallText + "\n\nDownload-Seite jetzt öffnen?", "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                    Ui.Open(ReleasesPage);
+                return false;
+            }
             if (MessageBox.Show(owner,
                 PendingText + "\n\nWake on LAN stellt jetzt die vorherige Version wieder her und startet danach neu.\n\nJetzt wiederherstellen?",
                 "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return false;
@@ -981,8 +1034,8 @@ namespace WakeOnLan
         {
             if (InProjectFolder) throw new Exception("Im Projektordner wird nichts zurückgesetzt.");
             if (IsElevated) throw new Exception("Wake on LAN läuft gerade mit Administratorrechten.");
-            string data = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-            bool protectedDir = string.Equals(Path.GetDirectoryName(dir), data, StringComparison.OrdinalIgnoreCase);
+            bool protectedDir = IsProtectedDir(dir);
+            if (protectedDir && LegacyWithoutHash(dir)) throw new Exception(ReinstallText);
             string exe = Application.ExecutablePath;
             bool writable = CanWrite(Path.GetDirectoryName(exe));
             // Sicherungen aus dem Temp-Ordner nie mit Administratorrechten zurückkopieren (jedes Programm des Benutzers
@@ -1007,7 +1060,6 @@ namespace WakeOnLan
             Var(vars, "LockName", LockName);
             Var(vars, "TargetId", TargetId);
             Var(vars, "Log", LogFor(attemptId));
-            Var(vars, "SharedLog", LogFile);
             vars.Append("$Elevated = $").Append(elevated ? "true" : "false").Append("\n");
             vars.Append("$Tray = $").Append(tray ? "true" : "false").Append("\n");
             // Reparatur-Skript als Datei im Temp-Ordner, auf der Befehlszeile nur Lader, Werte und SHA-256 (wie beim
@@ -1128,7 +1180,7 @@ namespace WakeOnLan
             catch { return null; }
         }
 
-        // Skripte nach RDP Pilot 1.57 (Journalformat 2, Ergebnis je Versuch, Ablauf mit Rechteerhöhung), nur Namen
+        // Skripte nach RDP Pilot 1.59 (Journalformat 2, Ergebnis je Versuch, Ablauf mit Rechteerhöhung), nur Namen
         // angepasst. Nur ASCII-Anführungszeichen. InstallLoader/RepairLoader stehen mit den Werten auf der Befehlszeile,
         // lesen $ScriptFile einmal in den Speicher, prüfen die SHA-256 gegen $ScriptHash und führen genau diese Bytes aus.
         // RestartScript: Neustarthelfer mit normalen Rechten für Update und Wiederherstellung mit Administratorrechten.
@@ -1140,17 +1192,64 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis im Arbeitsordner je Versuch als Letztes atomar veroeffentlichen: erst .teil, dann umbenennen
+function Publish-WorkResult([string]$text) {
+  $final = Join-Path $Work ('Update-' + $AttemptId + '.log')
+  $tmp = $final + '.teil'
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  $text | Out-File -LiteralPath $tmp -Encoding utf8 -ErrorAction Stop
+  Move-Item -LiteralPath $tmp -Destination $final -Force -ErrorAction Stop
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($Log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Wake on LAN', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 1.73 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 1.73 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'1.73' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern -and $AttemptId) {
+    $a = @('--nach-update', $AttemptId)
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result
 }
 $ErrorActionPreference = 'Stop'
 # geschuetzten Arbeitsordner anlegen: Besitzer Administratoren, schreiben nur SYSTEM und Administratoren, lesen angemeldete Benutzer
@@ -1195,7 +1294,7 @@ try {
   $msg = 'FEHLER Update-Skript nicht geladen, nichts veraendert: ' + $_.Exception.Message
   if ($Elevated) {
     # Ergebnis nur in den eigenen, geschuetzten Arbeitsordner; den Neustart macht der nicht erhoehte Helfer
-    try { New-WorkFolder; $msg | Out-File -LiteralPath (Join-Path $Work 'Update.log') -Encoding utf8 } catch {}
+    try { New-WorkFolder; Publish-WorkResult $msg } catch {}
   } else {
     try { $msg | Out-File -LiteralPath $Log -Encoding utf8 } catch {}
     $deadline = (Get-Date).AddSeconds(60)
@@ -1278,7 +1377,7 @@ try {
   # Neustarthelfer bereit ist und die Startbestaetigung geschrieben wurde; ohne Freigabe nichts veraendern.
   if ($Elevated) {
     $released = $false
-    try { if ((Get-Item -LiteralPath $ReleaseFile).Length -le 256) { $released = ([System.IO.File]::ReadAllText($ReleaseFile).Trim() -ceq $ReleaseId) } } catch {}
+    $released = ((Read-Small $ReleaseFile) -ceq $ReleaseId)
     if (-not $released) { throw 'Das Update wurde nicht freigegeben.' }
   }
   if ($Elevated) {
@@ -1540,7 +1639,7 @@ try {
 }
 if ($Elevated) {
   # Ergebnis nur in den eigenen, geschuetzten Arbeitsordner schreiben; Neustart macht der nicht erhoehte Prozess
-  if ($workReady) { try { $result | Out-File -LiteralPath (Join-Path $Work 'Update.log') -Encoding utf8 } catch {} }
+  if ($workReady) { try { Publish-WorkResult $result } catch {} }
 } else {
   try { $result | Out-File -LiteralPath $Log -Encoding utf8 } catch { $noRestart = $true }
   if (-not $noRestart) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
@@ -1564,17 +1663,64 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis im Arbeitsordner je Versuch als Letztes atomar veroeffentlichen: erst .teil, dann umbenennen
+function Publish-WorkResult([string]$text) {
+  $final = Join-Path $Work ('Update-' + $AttemptId + '.log')
+  $tmp = $final + '.teil'
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  $text | Out-File -LiteralPath $tmp -Encoding utf8 -ErrorAction Stop
+  Move-Item -LiteralPath $tmp -Destination $final -Force -ErrorAction Stop
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($Log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Wake on LAN', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 1.73 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 1.73 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'1.73' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern -and $AttemptId) {
+    $a = @('--nach-update', $AttemptId)
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result
 }
 $code = $null
 try {
@@ -1593,7 +1739,7 @@ try {
   if ($h -cne $ScriptHash) { throw 'Das Reparatur-Skript wurde veraendert.' }
   $code = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($b)
 } catch {
-  # nichts veraendert. Erhoeht: ohne Update.log beenden (Neustarthelfer: Ergebnis unbekannt, kein Neustart).
+  # nichts veraendert. Erhoeht: ohne Ergebnisdatei beenden (Neustarthelfer: Ergebnis unbekannt, kein Neustart).
   # Ohne Adminrechte: FEHLER ins Protokoll und die bisherige Version wieder starten.
   if (-not $Elevated) {
     $msg = 'FEHLER Reparatur-Skript nicht geladen, nichts veraendert: ' + $_.Exception.Message
@@ -1628,7 +1774,7 @@ try {
   # Neustarthelfer bereit ist und die Startbestaetigung geschrieben wurde; ohne Freigabe nichts veraendern.
   if ($Elevated) {
     $released = $false
-    try { if ((Get-Item -LiteralPath $ReleaseFile).Length -le 256) { $released = ([System.IO.File]::ReadAllText($ReleaseFile).Trim() -ceq $ReleaseId) } } catch {}
+    $released = ((Read-Small $ReleaseFile) -ceq $ReleaseId)
     if (-not $released) { throw 'Die Wiederherstellung wurde nicht freigegeben.' }
   }
   # dieselbe Sperre wie das Update: nie zwei Wiederherstellungen oder Update und Wiederherstellung gleichzeitig
@@ -1709,6 +1855,9 @@ try {
   if ($lines.Count -lt 2 -or -not $lines[0].StartsWith('Wake-on-LAN-Update ') -or -not $lines[0].EndsWith(' - Wiederherstellungsjournal')) { throw 'Das Journal ist nicht lesbar.' }
   $format155 = (-not $format2) -and ($lines -ccontains 'Bereit')
   $withHash = $format2 -or $format155
+  # Altformat 1.72 ohne Pruefsummen: mit Administratorrechten nichts zurueckspielen (Sicherungen nicht pruefbar),
+  # sondern abbrechen; Wake on LAN verweist auf die Neuinstallation aus dem signierten Paket
+  if ($Elevated -and -not $withHash) { throw 'Altes Journal ohne Pruefsummen: mit Administratorrechten wird nicht zurueckgesetzt, bitte neu installieren.' }
   $planned = @()
   $i = 1
   if ($format2) {
@@ -1791,10 +1940,10 @@ try {
 }
 if ($haveLock) { try { $lock.ReleaseMutex() } catch {} }
 if ($Elevated) {
-  # Ergebnis nur in einen gepruefen Arbeitsordner; sonst ohne Update.log beenden (Neustarthelfer: Ergebnis unbekannt,
+  # Ergebnis nur in einen gepruefen Arbeitsordner; sonst ohne Ergebnisdatei beenden (Neustarthelfer: Ergebnis unbekannt,
   # kein Neustart)
   if (-not $workTrusted) { if ($haveLock) { try { $lock.ReleaseMutex() } catch {} }; exit 1 }
-  try { $result | Out-File -LiteralPath (Join-Path $Work 'Update.log') -Encoding utf8 } catch {}
+  try { Publish-WorkResult $result } catch {}
 } else {
   try { $result | Out-File -LiteralPath $Log -Encoding utf8 } catch { $noRestart = $true }
   if ($result.StartsWith('ZURUECK')) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
@@ -1813,17 +1962,64 @@ function Test-OldInstance {
   if ($ProcessStart -gt 0) { try { return ($p.StartTime.ToUniversalTime().Ticks -eq $ProcessStart) } catch { return $true } }
   return $true
 }
+# Steuerdatei aus dem Temp-Ordner (Startdatei, Bestaetigung, Freigabe): einmal oeffnen und aus demselben Stream
+# hoechstens 257 Bytes lesen; mehr als 256 Bytes oder nicht lesbar = ungueltig ($null)
+function Read-Small([string]$p) {
+  try {
+    $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 257
+      $n = 0
+      while ($n -lt 257) { $k = $fs.Read($b, $n, 257 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -gt 256) { return $null }
+    return [System.Text.Encoding]::ASCII.GetString($b, 0, $n).Trim()
+  } catch { return $null }
+}
+# Ergebnis im Arbeitsordner je Versuch als Letztes atomar veroeffentlichen: erst .teil, dann umbenennen
+function Publish-WorkResult([string]$text) {
+  $final = Join-Path $Work ('Update-' + $AttemptId + '.log')
+  $tmp = $final + '.teil'
+  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+  $text | Out-File -LiteralPath $tmp -Encoding utf8 -ErrorAction Stop
+  Move-Item -LiteralPath $tmp -Destination $final -Force -ErrorAction Stop
+}
+# Ergebnis dieses Versuchs selbst anzeigen (fuer wiederhergestellte Fassungen ohne Versuchskennung): hoechstens 16 KB
+# aus der eigenen Ergebnisdatei, ohne die gemeinsame Update.log anzufassen
+function Show-Result {
+  $text = $null
+  try {
+    $fs = [System.IO.File]::Open($Log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $b = New-Object byte[] 16385
+      $n = 0
+      while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+    } finally { $fs.Dispose() }
+    if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF).Trim() }
+  } catch {}
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  $icon = 'Warning'
+  if ($text -match '^OK ') { $icon = 'Information' }
+  $text = $text -replace '^(OK|FEHLER|ZURUECK|OFFEN) ', ''
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($text, 'Wake on LAN', 'OK', $icon)
+  } catch {}
+}
 # Neustart mit --nach-update und Versuchskennung. Nach einer Wiederherstellung ($LegacyFallback) kann die EXE aelter
-# als 1.73 sein und kennt keine Kennung: Dann nur --nach-update, und das Ergebnis wird erst unmittelbar vor dem Start
-# in die gemeinsame Datei kopiert, die aeltere Fassungen lesen ($SharedLog).
+# als 1.73 sein und kennt keine Kennung: Dann normal starten und das Ergebnis dieses Versuchs hier anzeigen. Die
+# gemeinsame Update.log der aelteren Fassungen wird nicht mehr beschrieben (parallele Versuche ueberschreiben sich nicht).
 function Start-Program([bool]$tray) {
-  $a = @('--nach-update')
   $modern = $true
   if ($LegacyFallback) { try { $modern = ([Version][System.Diagnostics.FileVersionInfo]::GetVersionInfo($Exe).FileVersion) -ge [Version]'1.73' } catch { $modern = $false } }
-  if ($modern -and $AttemptId) { $a += $AttemptId }
-  elseif ($SharedLog -and (Test-Path -LiteralPath $Log)) { try { Copy-Item -LiteralPath $Log -Destination $SharedLog -Force } catch {} }
-  if ($tray) { $a += '/tray' }
-  Start-Process -FilePath $Exe -ArgumentList $a
+  if ($modern -and $AttemptId) {
+    $a = @('--nach-update', $AttemptId)
+    if ($tray) { $a += '/tray' }
+    Start-Process -FilePath $Exe -ArgumentList $a
+    return
+  }
+  if ($tray) { Start-Process -FilePath $Exe -ArgumentList @('/tray') } else { Start-Process -FilePath $Exe }
+  Show-Result
 }
 $ErrorActionPreference = 'SilentlyContinue'
 # Startbestaetigung abwarten: Wake on LAN schreibt nach dem Start des erhoehten Skripts dessen Prozess-ID in $StartFile
@@ -1834,7 +2030,7 @@ try { 'bereit' | Out-File -LiteralPath $ReadyFile -Encoding ascii } catch {}
 $end = (Get-Date).AddMinutes(15)
 while ((Get-Date) -lt $end) {
   if (Test-Path -LiteralPath $StartFile) {
-    $s = [string](Get-Content -LiteralPath $StartFile -TotalCount 1)
+    $s = [string](Read-Small $StartFile)
     Remove-Item -LiteralPath $StartFile -Force
     if ($s.Trim() -match '^[0-9]{1,10}$') { $Installer = [int]$s.Trim() }
     break
@@ -1849,33 +2045,65 @@ if ($Installer -le 0) { exit }
 # erlaubt). Wake on LAN haelt seinen eigenen Handle offen, bis diese Bestaetigung da ist: Die Prozess-ID kann bis
 # dahin nicht neu vergeben werden, danach haelt dieser Handle den Prozess fest.
 $hInst = [IntPtr]::Zero
+$k32 = $null
 $waitNote = $null
 try {
-  $sig = '[DllImport(""kernel32.dll"", SetLastError = true)] public static extern IntPtr OpenProcess(int access, bool inherit, int pid); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr handle, int ms); [DllImport(""kernel32.dll"")] public static extern bool CloseHandle(IntPtr handle);'
+  $sig = '[DllImport(""kernel32.dll"", SetLastError = true)] public static extern IntPtr OpenProcess(int access, bool inherit, int pid); [DllImport(""kernel32.dll"", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr handle, int ms); [DllImport(""kernel32.dll"")] public static extern bool CloseHandle(IntPtr handle); [DllImport(""kernel32.dll"")] public static extern bool GetProcessTimes(IntPtr handle, out long creation, out long exit, out long kernel, out long user);'
   $k32 = Add-Type -MemberDefinition $sig -Name 'Warten' -Namespace 'WakeOnLanNeustart' -PassThru
   $hInst = $k32::OpenProcess(0x00101000, $false, $Installer)
   if ($hInst -eq [IntPtr]::Zero) { $waitNote = 'Kein Zugriff auf das Update (Windows-Fehler ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error() + '), Rueckfall auf die Prozess-ID.' }
 } catch { $waitNote = 'Warten ueber Handle nicht moeglich, Rueckfall auf die Prozess-ID: ' + $_.Exception.Message }
+# Startzeit des erhoehten Skripts merken (ueber den Handle bzw. OpenProcess 0x1000), damit im Rueckfall auf die
+# Prozess-ID ein Prozess mit anderer Startzeit nicht als das Update gilt
+function Get-StartTicks([IntPtr]$h) {
+  if ($h -eq [IntPtr]::Zero -or -not $k32) { return $null }
+  $c = 0L; $e = 0L; $kt = 0L; $u = 0L
+  if ($k32::GetProcessTimes($h, [ref]$c, [ref]$e, [ref]$kt, [ref]$u)) { return $c }
+  return $null
+}
+function Get-InstallerTicks {
+  if ($hInst -ne [IntPtr]::Zero) { return (Get-StartTicks $hInst) }
+  if (-not $k32) { return $null }
+  $hq = $k32::OpenProcess(0x1000, $false, $Installer)
+  if ($hq -eq [IntPtr]::Zero) { return $null }
+  try { return (Get-StartTicks $hq) } finally { [void]$k32::CloseHandle($hq) }
+}
+$instTicks = Get-InstallerTicks
 # Kein Handle (z. B. UAC mit einem anderen Administratorkonto): Rueckfall auf die Prozess-ID. Bis zur Bestaetigung
 # haelt Wake on LAN seinen eigenen Handle offen; die Prozess-ID kann bis dahin nicht neu vergeben werden.
 # Empfang bestaetigen: erst danach gibt Wake on LAN das erhoehte Skript frei
 try { [string]$Installer | Out-File -LiteralPath $AckFile -Encoding ascii } catch { exit }
-# $true = laeuft noch. WAIT_OBJECT_0 (0) = beendet, WAIT_TIMEOUT (258) = laeuft; WAIT_FAILED: Fehlercode merken und
-# ab dann ueber die Prozess-ID pruefen
+# $true = laeuft noch. Liegt das Ergebnis dieses Versuchs vor, ist das Skript fertig (es schreibt es als Letztes).
+# WAIT_OBJECT_0 (0) = beendet, WAIT_TIMEOUT (258) = laeuft; WAIT_FAILED: Fehlercode merken und ab dann ueber die
+# Prozess-ID pruefen. Im Rueckfall gilt ein Prozess mit anderer Startzeit nicht als das Update.
+$workLog = Join-Path $Work ('Update-' + $AttemptId + '.log')
+$unclearEnd = $null
+# $endConfirmed: Ende des Updates belegt (Ergebnisdatei, Handle signalisiert, kein Prozess mit der ID, andere
+# Startzeit). Nur dann darf der Versuchsordner geloescht werden; sonst bleibt er fuer die spaetere Bereinigung.
+$endConfirmed = $false
 function Test-Installer {
+  if (Test-Path -LiteralPath $workLog) { $script:endConfirmed = $true; return $false }
   if ($hInst -ne [IntPtr]::Zero) {
     $r = $k32::WaitForSingleObject($hInst, 0)
-    if ($r -eq 0) { return $false }
+    if ($r -eq 0) { $script:endConfirmed = $true; return $false }
     if ($r -eq 258) { return $true }
     $script:waitNote = 'Warten auf das Update fehlgeschlagen (Windows-Fehler ' + [System.Runtime.InteropServices.Marshal]::GetLastWin32Error() + '), Rueckfall auf die Prozess-ID.'
     try { [void]$k32::CloseHandle($hInst) } catch {}
     $script:hInst = [IntPtr]::Zero
   }
-  return [bool](Get-Process -Id $Installer -ErrorAction SilentlyContinue)
+  $p = Get-Process -Id $Installer -ErrorAction SilentlyContinue
+  if (-not $p) { $script:endConfirmed = $true; return $false }
+  if ($instTicks -ne $null) { $now = Get-InstallerTicks; if ($now -ne $null -and $now -ne $instTicks) { $script:endConfirmed = $true; return $false }; return $true }
+  # Identitaet ungeklaert (kein Handle, keine Startzeit): Ein Prozess mit dieser ID beweist nichts. Dann zaehlt nur
+  # noch die Ergebnisdatei dieses Versuchs (oben); kommt sie nicht innerhalb einer kurzen Frist, endet das Warten,
+  # und ohne Ergebnis wird ein unklarer Zustand gemeldet (kein Neustart). Nur wenn gar kein Prozess mit dieser ID
+  # mehr laeuft, ist das Update sicher beendet (siehe oben).
+  if (-not $waitNote) { $script:waitNote = 'Das Update liess sich nur ueber die Prozess-ID verfolgen.' }
+  if ($script:unclearEnd -eq $null) { $script:unclearEnd = (Get-Date).AddMinutes(2) }
+  return ((Get-Date) -lt $script:unclearEnd)
 }
 # Neustart erst nach bestaetigtem Ende des Installers; bei Fristablauf Fehler melden und nicht starten
 $end = (Get-Date).AddMinutes(15)
-$workLog = Join-Path $Work 'Update.log'
 $finished = $false
 while ((Get-Date) -lt $end) {
   if (-not (Test-Installer)) { $finished = $true; break }
@@ -1890,13 +2118,23 @@ if (-not $finished) {
 }
 Start-Sleep -Milliseconds 300
 $text = $null
-if ((Test-Path -LiteralPath $workLog) -and (Get-Item -LiteralPath $workLog).Length -le 16384) { $text = Get-Content -LiteralPath $workLog -Raw -Encoding UTF8 }
+try {
+  $fs = [System.IO.File]::Open($workLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+  try {
+    $b = New-Object byte[] 16385
+    $n = 0
+    while ($n -lt 16385) { $k = $fs.Read($b, $n, 16385 - $n); if ($k -le 0) { break }; $n += $k }
+  } finally { $fs.Dispose() }
+  if ($n -le 16384) { $text = (New-Object System.Text.UTF8Encoding($false)).GetString($b, 0, $n).TrimStart([char]0xFEFF) }
+} catch {}
 if ($text) { $text = $text.Trim() }
-if ($Attempt) { Remove-Item -LiteralPath $Attempt -Recurse -Force }
+# Versuchsordner (Eingabedateien des Updates) nur bei belegtem Ende loeschen: Laeuft das Update moeglicherweise noch,
+# bleibt er erhalten und wird spaeter von der Bereinigung entfernt
+if ($Attempt -and $endConfirmed) { Remove-Item -LiteralPath $Attempt -Recurse -Force }
 # Neustart nur bei eindeutigem Abschluss: installiert (OK) oder nichts veraendert bzw. vollstaendig zurueckgesetzt (FEHLER)
 $clear = $text -and ($text -match '^(OK|FEHLER|ZURUECK) ') -and -not (Test-Path -LiteralPath (Join-Path $Work 'Wiederherstellung-offen'))
 if (-not $clear) {
-  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.' }
+  if (-not $text) { $text = 'OFFEN Ergebnis des Updates unbekannt.'; if ($waitNote) { $text += ' ' + $waitNote } }
   ($text + ' Wake on LAN wurde nicht neu gestartet.') | Out-File -LiteralPath $Log -Encoding utf8
   exit
 }
