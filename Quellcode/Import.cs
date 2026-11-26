@@ -20,14 +20,24 @@ namespace WakeOnLan
     /// </summary>
     internal static class ScriptImport
     {
-        private static readonly Regex FileName = new Regex(@"^Wake on LAN \((?<name>.+)\)\.bat$", RegexOptions.IgnoreCase);
-        private static readonly Regex MacLine = new Regex(@"^\s*""%WOL%""\s+(?<mac>[0-9A-F]{2}([:-][0-9A-F]{2}){5})", RegexOptions.IgnoreCase | RegexOptions.Multiline);
-        private static readonly Regex SetLine = new Regex(@"^\s*SET\s+""(?<key>[A-Z]+)=(?<value>[^""]*)""", RegexOptions.IgnoreCase | RegexOptions.Multiline);
-        private static readonly Regex ForLine = new Regex(@"^\s*FOR\s+%%\w\s+IN\s+\((?<list>[^)]*)\)\s+DO\s+CALL", RegexOptions.IgnoreCase | RegexOptions.Multiline);
-        private static readonly Regex NudgeLine = new Regex(@"^\s*CALL\s+:Anstossen\s+""(?<name>[^""]+)""\s+(?<host>\S+)", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        private static readonly Regex FileName = new Regex(@"^Wake on LAN \((?<name>.+)\)\.bat$", RegexOptions.IgnoreCase, Rx.Timeout);
+        private static readonly Regex MacLine = new Regex(@"^\s*""%WOL%""\s+(?<mac>[0-9A-F]{2}([:-][0-9A-F]{2}){5})", RegexOptions.IgnoreCase | RegexOptions.Multiline, Rx.Timeout);
+        private static readonly Regex SetLine = new Regex(@"^\s*SET\s+""(?<key>[A-Z]+)=(?<value>[^""]*)""", RegexOptions.IgnoreCase | RegexOptions.Multiline, Rx.Timeout);
+        private static readonly Regex ForLine = new Regex(@"^\s*FOR\s+%%\w\s+IN\s+\((?<list>[^)]*)\)\s+DO\s+CALL", RegexOptions.IgnoreCase | RegexOptions.Multiline, Rx.Timeout);
+        private static readonly Regex NudgeLine = new Regex(@"^\s*CALL\s+:Anstossen\s+""(?<name>[^""]+)""\s+(?<host>\S+)", RegexOptions.IgnoreCase | RegexOptions.Multiline, Rx.Timeout);
 
         /// <summary>Liest alle Skripte im Ordner. Vorhandene Geräte (gleicher Name) werden nicht verändert.</summary>
         public static List<Device> Read(string folder, out string summary)
+        {
+            // fremde Dateien: jede Regex-Prüfung mit Zeitlimit; Zeitüberschreitung = nicht eindeutig prüfbar = nichts übernehmen
+            try { return ReadChecked(folder, out summary); }
+            catch (RegexMatchTimeoutException)
+            {
+                throw new InvalidDataException("Ein Skript ließ sich nicht eindeutig prüfen (Zeitlimit überschritten). Es wurde nichts übernommen.");
+            }
+        }
+
+        private static List<Device> ReadChecked(string folder, out string summary)
         {
             var found = new List<Device>();
             HashSet<string> allMembers = null;

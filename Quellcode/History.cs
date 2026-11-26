@@ -13,6 +13,16 @@ using System.Windows.Forms;
 
 namespace WakeOnLan
 {
+    /// <summary>
+    /// Zeitlimit für Regex-Prüfungen fremder Daten (Dateien, Sicherungen, Netz): 250 ms. Eine Zeitüberschreitung
+    /// (RegexMatchTimeoutException) gilt als „nicht eindeutig prüfbar“ und führt zur Ablehnung.
+    /// Referenz: Monitor Dimmer ab 2.81 (ActionSeal.RxTimeout).
+    /// </summary>
+    internal static class Rx
+    {
+        public static readonly TimeSpan Timeout = TimeSpan.FromMilliseconds(250);
+    }
+
     /// <summary>Verlauf in %LOCALAPPDATA%\Wake on LAN\Verlauf.log (eine Zeile je Ereignis, höchstens 2000 Zeilen).</summary>
     internal static class History
     {

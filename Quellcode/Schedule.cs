@@ -34,7 +34,8 @@ namespace WakeOnLan
             {
                 if (Parsed) return Schedules.WhatText(Shutdown, Kind, Value);
                 // unbekannter Aufbau: Name der Aufgabe, Uhrzeit am Ende mit Doppelpunkt ("07.00" -> "07:00")
-                return System.Text.RegularExpressions.Regex.Replace(Name, @"(\d{2})\.(\d{2})$", "$1:$2");
+                try { return System.Text.RegularExpressions.Regex.Replace(Name, @"(\d{2})\.(\d{2})$", "$1:$2", System.Text.RegularExpressions.RegexOptions.None, Rx.Timeout); }
+                catch (System.Text.RegularExpressions.RegexMatchTimeoutException) { return Name; } // nur Anzeige
             }
         }
 

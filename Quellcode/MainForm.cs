@@ -1787,9 +1787,10 @@ namespace WakeOnLan
         private void CheckFirewallLater()
         {
             int port = _store.Remote.Port;
+            bool internet = _store.Remote.InternetActive;
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                string problem = Firewall.Problem(port);
+                string problem = Firewall.Problem(port, internet);
                 if (problem == null) return;
                 Post(() => SetMessage("Steuerung per Handy: " + problem + " (siehe „Steuerung per Handy“ in der Navigation).", Ui.Yellow));
             });

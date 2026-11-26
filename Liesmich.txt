@@ -200,7 +200,12 @@ Einrichten:
   2. "Adresse für das Handy": Rechnername, IP-Adresse oder Domain/DynDNS-Name
      – daraus entstehen Link und QR-Code im Dialog.
   3. Speichern. Die Windows-Firewall-Freigabe "Wake on LAN (Handy)" für den
-     Port legt das Programm auf Nachfrage an (Administratorrechte).
+     Port legt das Programm auf Nachfrage an (Administratorrechte). Sie gilt
+     nur für TCP, nur für dieses Programm und nur in privaten und
+     Domänen-Netzen; ohne "Auch aus dem Internet erreichbar" nur für Adressen
+     aus dem Heimnetz und per VPN. Eine von Hand erweiterte Freigabe (weitere
+     Ports, alle Programme, öffentliche Netze, Internet-Adressen) meldet der
+     Dialog als zu weit – "Freigeben …" legt sie neu an.
      Ist zusätzlich ein anderes Firewall-Programm aktiv (z. B. ESET), zeigt
      der Dialog es an – dort muss eingehend TCP auf dem Port ebenfalls
      erlaubt werden (bzw. das Heimnetz als vertrauenswürdig eingestuft sein).
@@ -310,6 +315,13 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.76.2026.1126 Firewall und Prüfungen nach den Vorgaben vom 25.11.:
+                 - Firewall-Freigabe ohne Internet-Zugriff nur für Heimnetz
+                   und VPN, ohne Edge Traversal; zu weit gefasste Freigaben
+                   werden gemeldet
+                 - Prüfungen von Skripten, Zertifikaten und Update-Daten
+                   mit Zeitlimit; was sich nicht eindeutig prüfen lässt,
+                   wird abgelehnt
   1.75.2026.1125 Selbst-Update und Sicherheit nach den Vorgaben vom 25.11.:
                  - Update und Wiederherstellung auf dem Stand von
                    RDP Pilot 1.59; Steuerdateien werden begrenzt gelesen

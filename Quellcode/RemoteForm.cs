@@ -209,9 +209,10 @@ namespace WakeOnLan
             {
                 if (!_https.Checked) _internet.Checked = false; // aus dem Internet nur mit HTTPS
                 UpdateState();
+                CheckFirewall();
                 if (_https.Checked && HasCertInput()) CheckCertificate();
             };
-            _internet.CheckedChanged += (s, e) => UpdateState();
+            _internet.CheckedChanged += (s, e) => { UpdateState(); CheckFirewall(); };
             _port.Box.TextChanged += (s, e) => { UpdateUrl(); CheckFirewall(); _testResult.Text = ""; };
             _address.Box.TextChanged += (s, e) => { UpdateUrl(); _testResult.Text = ""; };
             _cert.Box.TextChanged += (s, e) => _certStatus.Text = "";
@@ -830,16 +831,20 @@ namespace WakeOnLan
             return false;
         }
 
+        /// <summary>Zugriff aus dem Internet in der Seite gewählt (nur zusammen mit HTTPS wirksam).</summary>
+        private bool InternetChosen { get { return _internet.Checked && _https.Checked; } }
+
         private void CheckFirewall()
         {
             if (_demo) return;
             int port = PortValue();
             if (port == 0) { _firewall.Text = ""; return; }
+            bool internet = InternetChosen;
             _firewall.ForeColor = Ui.Muted;
             _firewall.Text = "Prüfe …";
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                string problem = Firewall.Problem(port);
+                string problem = Firewall.Problem(port, internet);
                 bool windowsOn = Firewall.WindowsFirewallOn();
                 var others = Firewall.OtherFirewalls();
                 if (IsDisposed || !IsHandleCreated) return;
@@ -847,7 +852,7 @@ namespace WakeOnLan
                 {
                     BeginInvoke(new Action(() =>
                     {
-                        if (PortValue() != port) return;
+                        if (PortValue() != port || InternetChosen != internet) return;
                         string text = problem != null ? problem + "."
                             : windowsOn ? "Port " + port + " ist in der Windows-Firewall freigegeben."
                             : "Die Windows-Firewall ist aus – dort ist nichts nötig.";
@@ -928,7 +933,7 @@ namespace WakeOnLan
         {
             int port = PortValue();
             if (port == 0) { Fail("Bitte zuerst einen gültigen Port eingeben.", _port); return; }
-            string error = Firewall.Allow(port);
+            string error = Firewall.Allow(port, InternetChosen);
             if (error != null) _error.Text = error;
             CheckFirewall();
         }
@@ -1007,11 +1012,11 @@ namespace WakeOnLan
                 catch (Exception ex) { MessageBox.Show(this, "Autostart konnte nicht eingerichtet werden: " + ex.Message, Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
                 if (on)
                 {
-                    string problem = Firewall.Problem(r.Port);
+                    string problem = Firewall.Problem(r.Port, r.InternetActive);
                     if (problem != null && MessageBox.Show(this, problem + ".\r\n\r\nDamit das Handy diesen PC erreicht, muss die Windows-Firewall Port " + r.Port +
                         " freigeben. Jetzt freigeben? (Windows fragt nach Administratorrechten.)", Ui.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                     {
-                        string error = Firewall.Allow(r.Port);
+                        string error = Firewall.Allow(r.Port, r.InternetActive);
                         if (error != null) MessageBox.Show(this, error, Ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
@@ -1189,8 +1194,21 @@ namespace WakeOnLan
     {
         public const string RuleName = "Wake on LAN (Handy)";
 
-        /// <summary>null = alles in Ordnung (oder nicht prüfbar), sonst eine kurze Beschreibung des Problems.</summary>
-        public static string Problem(int port)
+        /// <summary>Heimnetz und VPN – dieselben Bereiche, die der Webserver ohne Internet-Option annimmt (WebServer.IsLocalNetwork).</summary>
+        private static readonly string[] LocalRanges =
+        {
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "fc00::/7", "fe80::/10"
+        };
+
+        private const int TcpProtocol = 6;
+        private const int ProfileDomain = 1, ProfilePrivate = 2, ProfilePublic = 4;
+
+        /// <summary>
+        /// null = alles in Ordnung (oder nicht prüfbar), sonst eine kurze Beschreibung des Problems.
+        /// internet = Zugriff aus dem Internet eingeschaltet (nur mit HTTPS); sonst muss die Regel auf Heimnetz und VPN begrenzt sein.
+        /// Referenz: Sync Pilot ab 1.104 (Firewall.Problem, RuleProblem, PortProblem, OnlyLocal).
+        /// </summary>
+        public static string Problem(int port, bool internet)
         {
             try
             {
@@ -1199,34 +1217,172 @@ namespace WakeOnLan
                 dynamic policy = Activator.CreateInstance(t);
                 int current = policy.CurrentProfileTypes;
                 bool active = false;
-                foreach (int profile in new[] { 1, 2, 4 })
+                foreach (int profile in new[] { ProfileDomain, ProfilePrivate, ProfilePublic })
                 {
                     if ((current & profile) == 0) continue;
                     object on = t.InvokeMember("FirewallEnabled", System.Reflection.BindingFlags.GetProperty, null, (object)policy, new object[] { profile });
                     if (on is bool && (bool)on) active = true;
                 }
                 if (!active) return null; // Windows-Firewall aus (z. B. anderes Firewall-Programm)
-                dynamic rule;
-                try { rule = policy.Rules.Item(RuleName); }
-                catch { return "Die Windows-Firewall-Freigabe fehlt"; }
-                bool enabled = rule.Enabled;
-                int action = rule.Action, direction = rule.Direction, profiles = rule.Profiles;
-                string ports = rule.LocalPorts;
-                string app = rule.ApplicationName;
-                if (!enabled || action != 1 || direction != 1) return "Die Firewall-Freigabe ist ausgeschaltet";
-                if (ports != port.ToString()) return "Die Firewall-Freigabe gilt für einen anderen Port";
-                if (!string.IsNullOrEmpty(app) && !string.Equals(app, Application.ExecutablePath, StringComparison.OrdinalIgnoreCase))
-                    return "Die Firewall-Freigabe gilt für einen anderen Programmordner";
-                // nur warnen, wenn ausschließlich "Öffentlich" aktiv ist – ein öffentlicher Zusatzadapter
-                // (z. B. Hyper-V, VPN, VirtualBox) ändert nichts am privaten Heimnetz
-                if (current == 4 && (profiles & 4) == 0)
-                    return "Das Netzwerk ist in Windows als „Öffentlich“ eingestuft – bitte auf „Privat“ umstellen";
+                // alle Regeln dieses Namens prüfen (von Hand angelegte Doppel eingeschlossen)
+                var rules = new List<object>();
+                foreach (dynamic r in policy.Rules)
+                {
+                    string name = r.Name;
+                    if (string.Equals(name, RuleName, StringComparison.OrdinalIgnoreCase)) rules.Add(r);
+                }
+                if (rules.Count == 0) return "Die Windows-Firewall-Freigabe fehlt";
+                string problem = null;
+                bool usable = false;
+                foreach (dynamic rule in rules)
+                {
+                    string p = RuleProblem(rule, port, current, internet);
+                    if (p == null) usable = true;
+                    else if (problem == null || p.StartsWith("!", StringComparison.Ordinal)) problem = p;
+                }
+                // zu weit gefasste Regeln („!“) zählen immer, sonst genügt eine passende
+                if (problem != null && (problem.StartsWith("!", StringComparison.Ordinal) || !usable)) return problem.TrimStart('!');
                 return null;
             }
             catch
             {
                 return "Die Windows-Firewall konnte nicht geprüft werden";
             }
+        }
+
+        /// <summary>Problem einer Regel; „!“ am Anfang = die Regel reicht weiter als vorgesehen.</summary>
+        private static string RuleProblem(dynamic rule, int port, int current, bool internet)
+        {
+            bool enabled = rule.Enabled;
+            int action = rule.Action, direction = rule.Direction, profiles = rule.Profiles, protocol = rule.Protocol;
+            string ports = rule.LocalPorts;
+            string app = rule.ApplicationName;
+            string remote = rule.RemoteAddresses;
+            bool edge = false;
+            try { edge = rule.EdgeTraversal; } catch { }
+            if (!enabled || action != 1 || direction != 1) return "Die Firewall-Freigabe ist ausgeschaltet";
+            // zu weit: ohne Programmbindung, für alle Protokolle, weitere Ports, auch öffentliche Netze, Internet-Adressen, Edge Traversal
+            if (string.IsNullOrEmpty(app)) return "!Die Firewall-Freigabe gilt für alle Programme – bitte neu freigeben";
+            if (!string.Equals(app, Application.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+                return "Die Firewall-Freigabe gilt für einen anderen Programmordner";
+            if (protocol != TcpProtocol)
+                return protocol == 256 ? "!Die Firewall-Freigabe gilt für alle Protokolle – bitte neu freigeben" : "Die Firewall-Freigabe gilt nicht für TCP";
+            string portProblem = PortProblem(ports, port);
+            if (portProblem != null) return portProblem;
+            if ((profiles & ProfilePublic) != 0) return "!Die Firewall-Freigabe gilt auch in öffentlichen Netzen – bitte neu freigeben";
+            if (edge) return "!Die Firewall-Freigabe lässt Verbindungen über Edge Traversal zu – bitte neu freigeben";
+            if (!internet)
+            {
+                if (!OnlyLocal(remote)) return "!Die Firewall-Freigabe gilt auch für Adressen aus dem Internet – bitte neu freigeben";
+            }
+            else if (remote != "*") return "Die Firewall-Freigabe gilt nur für das Heimnetz – für den Zugriff aus dem Internet bitte neu freigeben";
+            // CurrentProfileTypes enthält die Profile aller Verbindungen: ein öffentlicher Zusatzadapter (VPN, Hyper-V)
+            // setzt „Öffentlich“ mit. Nur warnen, wenn kein Netz privat bzw. Domäne ist.
+            if ((current & (ProfilePrivate | ProfileDomain)) == 0)
+                return "Das Netzwerk ist in Windows als „Öffentlich“ eingestuft – bitte auf „Privat“ umstellen";
+            return null;
+        }
+
+        /// <summary>
+        /// Lokale Ports: genau der eigene Port = in Ordnung. Listen, Bereiche und Schlüsselwörter, die den eigenen Port
+        /// und mehr freigeben, gelten als zu weit („!“); fehlt der eigene Port, gilt die Regel für einen anderen Port.
+        /// </summary>
+        private static string PortProblem(string ports, int port)
+        {
+            string own = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            string all = (ports ?? "").Trim();
+            if (all == own) return null;
+            if (all == "*") return "!Die Firewall-Freigabe gilt für alle Ports – bitte neu freigeben";
+            bool covers = false, other = false;
+            foreach (string raw in all.Split(','))
+            {
+                string e = raw.Trim();
+                if (e.Length == 0) continue;
+                int a, b, dash = e.IndexOf('-');
+                if (dash > 0 && int.TryParse(e.Substring(0, dash).Trim(), out a) && int.TryParse(e.Substring(dash + 1).Trim(), out b))
+                {
+                    if (a <= port && port <= b) covers = true;
+                    if (a != port || b != port) other = true;
+                }
+                else if (int.TryParse(e, out a))
+                {
+                    if (a == port) covers = true; else other = true;
+                }
+                else other = true; // Schlüsselwörter (z. B. RPC) oder Unlesbares
+            }
+            if (!covers) return "Die Firewall-Freigabe gilt für einen anderen Port";
+            if (other) return "!Die Firewall-Freigabe gilt auch für weitere Ports – bitte neu freigeben";
+            return null;
+        }
+
+        /// <summary>Liegt jeder Eintrag der Remote-Adressen ganz in den Heimnetz-/VPN-Bereichen? Unbekanntes zählt als nein.</summary>
+        private static bool OnlyLocal(string remote)
+        {
+            if (string.IsNullOrEmpty(remote)) return false;
+            foreach (string raw in remote.Split(','))
+            {
+                string e = raw.Trim();
+                if (e.Length == 0) continue;
+                if (e.Equals("LocalSubnet", StringComparison.OrdinalIgnoreCase)) continue; // nur das eigene Teilnetz
+                byte[] lo, hi;
+                if (!Range(e, out lo, out hi)) return false; // "*", Schlüsselwörter wie "Internet", Unlesbares
+                bool inside = false;
+                foreach (string block in LocalRanges)
+                {
+                    byte[] blo, bhi;
+                    if (Range(block, out blo, out bhi) && blo.Length == lo.Length && Compare(lo, blo) >= 0 && Compare(hi, bhi) <= 0) { inside = true; break; }
+                }
+                if (!inside) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Eintrag „Adresse“, „Adresse/Maske“, „Adresse/Präfix“ oder „Von-Bis“ als Bereich (Bytes).</summary>
+        private static bool Range(string e, out byte[] lo, out byte[] hi)
+        {
+            lo = hi = null;
+            System.Net.IPAddress a, b;
+            int dash = e.IndexOf('-');
+            if (dash > 0)
+            {
+                if (!System.Net.IPAddress.TryParse(e.Substring(0, dash), out a) || !System.Net.IPAddress.TryParse(e.Substring(dash + 1), out b)) return false;
+                lo = a.GetAddressBytes(); hi = b.GetAddressBytes();
+                return lo.Length == hi.Length && Compare(lo, hi) <= 0;
+            }
+            int slash = e.IndexOf('/');
+            if (slash < 0)
+            {
+                if (!System.Net.IPAddress.TryParse(e, out a)) return false;
+                lo = a.GetAddressBytes(); hi = (byte[])lo.Clone();
+                return true;
+            }
+            if (!System.Net.IPAddress.TryParse(e.Substring(0, slash), out a)) return false;
+            byte[] addr = a.GetAddressBytes();
+            string m = e.Substring(slash + 1);
+            int prefix;
+            System.Net.IPAddress mask;
+            if (!int.TryParse(m, out prefix))
+            {
+                if (a.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || !System.Net.IPAddress.TryParse(m, out mask)) return false;
+                prefix = 0;
+                foreach (byte x in mask.GetAddressBytes()) for (int bit = 7; bit >= 0; bit--) if ((x & (1 << bit)) != 0) prefix++;
+            }
+            if (prefix < 0 || prefix > addr.Length * 8) return false;
+            lo = new byte[addr.Length]; hi = new byte[addr.Length];
+            for (int i = 0; i < addr.Length; i++)
+            {
+                int bits = Math.Max(0, Math.Min(8, prefix - i * 8));
+                byte keep = (byte)(bits == 0 ? 0 : 0xFF << (8 - bits));
+                lo[i] = (byte)(addr[i] & keep);
+                hi[i] = (byte)(addr[i] | ~keep);
+            }
+            return true;
+        }
+
+        private static int Compare(byte[] x, byte[] y)
+        {
+            for (int i = 0; i < x.Length; i++) if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+            return 0;
         }
 
         /// <summary>Ist die Windows-Firewall für ein aktives Netzwerkprofil eingeschaltet?</summary>
@@ -1287,8 +1443,11 @@ namespace WakeOnLan
             return names;
         }
 
-        /// <summary>Freigabe (neu) anlegen – mit Administratorrechten (Windows fragt nach). Rückgabe: Fehlertext oder null.</summary>
-        public static string Allow(int port)
+        /// <summary>
+        /// Freigabe (neu) anlegen – mit Administratorrechten (Windows fragt nach). Rückgabe: Fehlertext oder null.
+        /// Nur TCP, nur diese EXE, nur Privat und Domäne, edge=no; ohne Internet-Zugriff nur Heimnetz- und VPN-Adressen.
+        /// </summary>
+        public static string Allow(int port, bool internet)
         {
             string exe = Application.ExecutablePath;
             if (exe.IndexOfAny(new[] { '"', '&', '|', '<', '>', '^', '%' }) >= 0)
@@ -1296,10 +1455,12 @@ namespace WakeOnLan
             // Systemprogramme nur über feste Pfade, nie über den Suchpfad
             string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
             string netsh = "\"" + Path.Combine(system, "netsh.exe") + "\"";
+            // ohne Internet-Zugriff begrenzt schon die Firewall auf Heimnetz und VPN (der Webserver prüft zusätzlich)
+            string remote = internet ? "any" : string.Join(",", LocalRanges);
             string inner = netsh + " advfirewall firewall delete rule name=\"" + RuleName + "\" >nul 2>&1 & " +
                 netsh + " advfirewall firewall add rule name=\"" + RuleName + "\" dir=in action=allow protocol=TCP localport=" + port +
-                " profile=private,domain program=\"" + exe + "\" enable=yes";
-            var psi = new ProcessStartInfo(Path.Combine(system, "cmd.exe"), "/s /c \"" + inner + "\"")
+                " remoteip=" + remote + " profile=private,domain edge=no program=\"" + exe + "\" enable=yes";
+            var psi = new ProcessStartInfo(Path.Combine(system, "cmd.exe"), "/d /s /c \"" + inner + "\"")
             {
                 Verb = "runas",
                 UseShellExecute = true,
@@ -1319,7 +1480,7 @@ namespace WakeOnLan
                 if (ex.NativeErrorCode == 1223) return "Freigabe abgebrochen (keine Administratorrechte erteilt).";
                 return "Die Freigabe konnte nicht angelegt werden: " + ex.Message;
             }
-            History.Add("Handy", "Firewall-Freigabe für TCP-Port " + port + " angelegt");
+            History.Add("Handy", "Firewall-Freigabe für TCP-Port " + port + " angelegt (" + (internet ? "auch aus dem Internet" : "nur Heimnetz und VPN") + ")");
             return null;
         }
     }

@@ -235,9 +235,16 @@ namespace WakeOnLan
         private static List<byte[]> Blocks(string text, string label)
         {
             var list = new List<byte[]>();
-            var rx = new Regex("-----BEGIN " + Regex.Escape(label) + "-----([A-Za-z0-9+/=\\s]+)-----END " + Regex.Escape(label) + "-----");
-            foreach (Match m in rx.Matches(text))
-                list.Add(Convert.FromBase64String(Regex.Replace(m.Groups[1].Value, "\\s", "")));
+            var rx = new Regex("-----BEGIN " + Regex.Escape(label) + "-----([A-Za-z0-9+/=\\s]+)-----END " + Regex.Escape(label) + "-----", RegexOptions.None, Rx.Timeout);
+            try
+            {
+                foreach (Match m in rx.Matches(text))
+                    list.Add(Convert.FromBase64String(Regex.Replace(m.Groups[1].Value, "\\s", "", RegexOptions.None, Rx.Timeout)));
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                throw new InvalidDataException("Die Datei ließ sich nicht eindeutig prüfen (Zeitlimit überschritten).");
+            }
             return list;
         }
 

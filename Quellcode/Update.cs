@@ -242,7 +242,10 @@ namespace WakeOnLan
             if (values["Programm"] != "Wake on LAN") { detail = "Das Manifest gehört zu „" + values["Programm"] + "“, nicht zu Wake on LAN."; return Invalid; }
             if (values["Version"] != version) { detail = "Das Manifest nennt Version " + values["Version"] + ", das Release " + version + "."; return Invalid; }
             if (values["Datei"] != AssetName(version)) { detail = "Das Manifest nennt die Datei „" + values["Datei"] + "“."; return Invalid; }
-            if (!Regex.IsMatch(values["SHA256"], "^[0-9a-f]{64}$")) { detail = "Die Prüfsumme im Manifest ist ungültig."; return Invalid; }
+            bool shaOk;
+            try { shaOk = Regex.IsMatch(values["SHA256"], "^[0-9a-f]{64}$", RegexOptions.None, Rx.Timeout); }
+            catch (RegexMatchTimeoutException) { detail = "Das Manifest ließ sich nicht eindeutig prüfen (Zeitlimit)."; return Invalid; }
+            if (!shaOk) { detail = "Die Prüfsumme im Manifest ist ungültig."; return Invalid; }
             sha = values["SHA256"].ToUpperInvariant();
             return null;
         }
@@ -424,7 +427,9 @@ namespace WakeOnLan
         /// <summary>Gültige Versuchskennung (32 Hex-Zeichen, klein)?</summary>
         public static bool IsAttemptId(string id)
         {
-            return id != null && Regex.IsMatch(id, "^[0-9a-f]{32}$");
+            if (id == null || id.Length != 32) return false;
+            try { return Regex.IsMatch(id, "^[0-9a-f]{32}$", RegexOptions.None, Rx.Timeout); }
+            catch (RegexMatchTimeoutException) { return false; }
         }
 
         /// <summary>
@@ -835,6 +840,13 @@ namespace WakeOnLan
         /// </summary>
         private static bool ReadJournal(string dir, out List<JournalEntry> entries)
         {
+            // Zeitüberschreitung bei einer Regex-Prüfung = nicht eindeutig prüfbar = Stand ungeklärt
+            try { return ReadJournalChecked(dir, out entries); }
+            catch (RegexMatchTimeoutException) { entries = null; return false; }
+        }
+
+        private static bool ReadJournalChecked(string dir, out List<JournalEntry> entries)
+        {
             entries = null;
             string exe = Application.ExecutablePath;
             string manual = Path.Combine(Path.GetDirectoryName(exe), ManualName);
@@ -868,7 +880,7 @@ namespace WakeOnLan
             {
                 for (; i < lines.Length && lines[i].StartsWith("Geplant ", StringComparison.Ordinal); i++)
                 {
-                    Match g = Regex.Match(lines[i], @"^Geplant (\d+): Ziel: (.+)$");
+                    Match g = Regex.Match(lines[i], @"^Geplant (\d+): Ziel: (.+)$", RegexOptions.None, Rx.Timeout);
                     if (!g.Success || g.Groups[1].Value != (planned.Count + 1).ToString(CultureInfo.InvariantCulture) || !allowed(g.Groups[2].Value)) return false;
                     string p = g.Groups[2].Value;
                     if (planned.Exists(x => string.Equals(x, p, StringComparison.OrdinalIgnoreCase))) return false;
@@ -885,7 +897,7 @@ namespace WakeOnLan
             for (; i < lines.Length; i++)
             {
                 string line = lines[i];
-                Match e = Regex.Match(line, @"^Ersetzt (\d+)$");
+                Match e = Regex.Match(line, @"^Ersetzt (\d+)$", RegexOptions.None, Rx.Timeout);
                 if (e.Success)
                 {
                     if (list.Count == 0 || replacedLast || e.Groups[1].Value != list[list.Count - 1].N) return false;
@@ -893,8 +905,8 @@ namespace WakeOnLan
                     continue;
                 }
                 Match m = withHash
-                    ? Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)(?: \| Sicherungsdatei: .+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: (.+)$")
-                    : Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)()(?: \| Sicherungsdatei: .+?)? \| Hilfsdatei: (.+)$");
+                    ? Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)(?: \| Sicherungsdatei: .+? \| SHA256: ([0-9A-F]{64}))? \| Hilfsdatei: (.+)$", RegexOptions.None, Rx.Timeout)
+                    : Regex.Match(line, @"^Vorher (\d+): (Sicherung|Neu) \| Ziel: (.+?)()(?: \| Sicherungsdatei: .+?)? \| Hilfsdatei: (.+)$", RegexOptions.None, Rx.Timeout);
                 if (!m.Success) return false;
                 JournalEntry entry = new JournalEntry();
                 entry.N = m.Groups[1].Value; entry.Kind = m.Groups[2].Value; entry.Dst = m.Groups[3].Value;
