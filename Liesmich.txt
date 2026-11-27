@@ -321,6 +321,15 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.78.2026.1127 Sicherheit:
+                 - Update mit Administratorrechten ohne Neustart nur noch,
+                   wenn Windows eindeutig keine normalen Rechte kennt
+                   (Benutzerkontensteuerung aus oder eingebautes Konto
+                   "Administrator"); bei unklarem Stand bleibt es beim
+                   Hinweis, Wake on LAN normal zu starten
+                 - Drosselung falscher Anmeldungen: feste Obergrenze wird
+                   nie überschritten, vergessen werden zuerst die am
+                   längsten ruhigen Adressen
   1.77.2026.1127 Update aus einer Instanz mit Administratorrechten:
                  - Wake on LAN startet sich für das Update mit normalen
                    Rechten neu und installiert dann (von Hand mit

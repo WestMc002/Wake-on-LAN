@@ -474,11 +474,13 @@ namespace WakeOnLan
         }
 
         /// <summary>
-        /// Läuft Wake on LAN mit Administratorrechten auf einem System ohne normale Rechte (Benutzerkontensteuerung aus
-        /// oder eingebautes Konto „Administrator“, z. B. auf Windows Server)? Dann gibt es keinen Neustart mit normalen
-        /// Rechten; das Update läuft mit Administratorrechten, aber immer über den geschützten Arbeitsordner unter
-        /// %ProgramData%. Erkennung: Die Windows-Oberfläche liefert kein Token mit normalen Rechten. Ohne Oberfläche
-        /// (z. B. kein Explorer) gilt das ebenso, weil dann niemand normal starten kann.
+        /// Läuft Wake on LAN mit Administratorrechten auf einem System ohne normale Rechte? Dann gibt es keinen Neustart
+        /// mit normalen Rechten; das Update läuft mit Administratorrechten, aber immer über den geschützten Arbeitsordner
+        /// unter %ProgramData%. Nur bei eindeutig erkanntem Systemzustand (Befund P3 vom 27.11.2026): Benutzerkonten-
+        /// steuerung aus (EnableLUA = 0) oder eingebautes Konto „Administrator“ (RID 500) ohne Filter
+        /// (FilterAdministratorToken = 0, z. B. Windows Server). Ein fehlendes oder nicht lesbares Token der Oberfläche
+        /// allein reicht nicht – ein vorübergehender Fehler darf den Neustart mit normalen Rechten nicht umgehen; dann
+        /// bleibt es bei „bitte normal starten“. Liefert die Oberfläche ein normales Token, wird ohnehin neu gestartet.
         /// </summary>
         public static bool AlwaysElevated
         {
@@ -486,10 +488,35 @@ namespace WakeOnLan
             {
                 if (!IsElevated) return false;
                 IntPtr token = ShellToken();
-                if (token == IntPtr.Zero) return true;
-                CloseHandle(token);
-                return false;
+                if (token != IntPtr.Zero) { CloseHandle(token); return false; }
+                return NoUnelevatedRights();
             }
+        }
+
+        /// <summary>Gibt es auf diesem System nachweislich keine normalen Rechte für das aktuelle Konto? Im Zweifel false.</summary>
+        private static bool NoUnelevatedRights()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"))
+                {
+                    if (key == null) return false;
+                    object lua = key.GetValue("EnableLUA");
+                    if (lua is int && (int)lua == 0) return true; // Benutzerkontensteuerung aus
+                    if (!(lua is int)) return false;              // unklar
+                    using (var id = System.Security.Principal.WindowsIdentity.GetCurrent())
+                    {
+                        var sid = id.User;
+                        // eingebautes Konto „Administrator“: Konto-SID (S-1-5-21-…) mit RID 500
+                        bool builtin = sid != null && sid.IsAccountSid() && sid.Value.EndsWith("-500", StringComparison.Ordinal);
+                        if (!builtin) return false;
+                        object filter = key.GetValue("FilterAdministratorToken");
+                        if (filter == null) return true;          // Standard: kein Filter (Admin Approval Mode aus)
+                        return filter is int && (int)filter == 0;
+                    }
+                }
+            }
+            catch { return false; }
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

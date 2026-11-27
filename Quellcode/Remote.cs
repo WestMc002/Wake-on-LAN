@@ -401,6 +401,7 @@ namespace WakeOnLan
         private readonly Dictionary<string, int> _perIp = new Dictionary<string, int>();
         private readonly object _failLock = new object();
         private readonly Dictionary<string, int> _fails = new Dictionary<string, int>();
+        private readonly Dictionary<string, DateTime> _failSeen = new Dictionary<string, DateTime>(); // letzter Fehlversuch je Adresse
         private readonly Dictionary<string, DateTime> _locked = new Dictionary<string, DateTime>();
         private readonly List<DateTime> _internetFails = new List<DateTime>();
         private readonly Dictionary<string, List<DateTime>> _prefixFails = new Dictionary<string, List<DateTime>>();
@@ -409,14 +410,23 @@ namespace WakeOnLan
         private DateTime _lastPrune = DateTime.MinValue;
         private const int MaxTrackedPrefixes = 5000, MaxTrackedIps = 10000; // feste Obergrenzen für den Speicher
 
+        /// <summary>Zähler einer Adresse vergessen (nur unter _failLock).</summary>
+        private void ForgetIp(string ip)
+        {
+            _fails.Remove(ip);
+            _failSeen.Remove(ip);
+        }
+
         /// <summary>
-        /// Speicher der Drosselung aufräumen (nur unter _failLock aufrufen): abgelaufene Einträge aller Netze und Adressen
-        /// entfernen – auch von solchen, aus denen nichts mehr kommt – und die Zahl der gemerkten Einträge fest begrenzen.
+        /// Speicher der Drosselung aufräumen (nur unter _failLock aufrufen, vor dem Einfügen eines neuen Eintrags):
+        /// abgelaufene Einträge aller Netze und Adressen entfernen – auch von solchen, aus denen nichts mehr kommt – und
+        /// die Zahl der gemerkten Einträge fest begrenzen. Aufgeräumt wird schon beim Erreichen der Grenze, damit sie auch
+        /// nach dem folgenden Einfügen nicht überschritten wird.
         /// </summary>
         private void PruneFails(DateTime now)
         {
-            bool full = _prefixLastFail.Count > MaxTrackedPrefixes || _prefixFails.Count > MaxTrackedPrefixes
-                || _prefixLocked.Count > MaxTrackedPrefixes || _fails.Count > MaxTrackedIps || _locked.Count > MaxTrackedIps;
+            bool full = _prefixLastFail.Count >= MaxTrackedPrefixes || _prefixFails.Count >= MaxTrackedPrefixes
+                || _prefixLocked.Count >= MaxTrackedPrefixes || _fails.Count >= MaxTrackedIps || _locked.Count >= MaxTrackedIps;
             if (!full && (now - _lastPrune).TotalMinutes < 1) return; // höchstens einmal je Minute, außer eine Grenze ist erreicht
             _lastPrune = now;
             foreach (var p in _prefixFails.ToList())
@@ -426,10 +436,10 @@ namespace WakeOnLan
             }
             foreach (var k in _prefixLocked.Where(p => p.Value <= now).Select(p => p.Key).ToList()) _prefixLocked.Remove(k);
             foreach (var k in _prefixLastFail.Where(p => (now - p.Value).TotalHours >= 1).Select(p => p.Key).ToList()) _prefixLastFail.Remove(k);
-            foreach (var k in _locked.Where(p => p.Value <= now).Select(p => p.Key).ToList()) { _locked.Remove(k); _fails.Remove(k); }
+            foreach (var k in _locked.Where(p => p.Value <= now).Select(p => p.Key).ToList()) { _locked.Remove(k); ForgetIp(k); }
             // noch immer zu viele Netze (Versuche aus sehr vielen Netzen): die am längsten ruhigen vergessen,
             // gesperrte zuletzt – die gemeinsame Grenze bremst solche Angriffe ohnehin
-            if (_prefixLastFail.Count > MaxTrackedPrefixes || _prefixFails.Count > MaxTrackedPrefixes || _prefixLocked.Count > MaxTrackedPrefixes)
+            if (_prefixLastFail.Count >= MaxTrackedPrefixes || _prefixFails.Count >= MaxTrackedPrefixes || _prefixLocked.Count >= MaxTrackedPrefixes)
             {
                 var keys = _prefixLastFail.Keys.Union(_prefixFails.Keys).Union(_prefixLocked.Keys)
                     .OrderBy(k => _prefixLocked.ContainsKey(k) ? 1 : 0)
@@ -442,11 +452,13 @@ namespace WakeOnLan
                     _prefixLocked.Remove(k);
                 }
             }
-            // ebenso die Zähler je Adresse: nicht gesperrte zuerst vergessen
-            if (_fails.Count > MaxTrackedIps)
-                foreach (var k in _fails.Keys.Where(k => !_locked.ContainsKey(k)).Take(_fails.Count - MaxTrackedIps * 9 / 10).ToList()) _fails.Remove(k);
-            if (_locked.Count > MaxTrackedIps)
-                foreach (var k in _locked.OrderBy(p => p.Value).Take(_locked.Count - MaxTrackedIps * 9 / 10).Select(p => p.Key).ToList()) { _locked.Remove(k); _fails.Remove(k); }
+            // ebenso die Zähler je Adresse: nicht gesperrte zuerst vergessen, die am längsten ruhigen zuerst
+            if (_fails.Count >= MaxTrackedIps)
+                foreach (var k in _fails.Keys.Where(k => !_locked.ContainsKey(k))
+                    .OrderBy(k => { DateTime t; return _failSeen.TryGetValue(k, out t) ? t : DateTime.MinValue; })
+                    .Take(_fails.Count - MaxTrackedIps * 9 / 10).ToList()) ForgetIp(k);
+            if (_locked.Count >= MaxTrackedIps)
+                foreach (var k in _locked.OrderBy(p => p.Value).Take(_locked.Count - MaxTrackedIps * 9 / 10).Select(p => p.Key).ToList()) { _locked.Remove(k); ForgetIp(k); }
         }
 
         /// <summary>Netz einer Adresse für die Drosselung: IPv4 /24, IPv6 /64 (Angreifer wechseln meist nur die letzte Stelle).</summary>
@@ -894,7 +906,7 @@ namespace WakeOnLan
 
         private void LoggedIn(Response res, string ip, bool local, string what)
         {
-            lock (_failLock) _fails.Remove(ip);
+            lock (_failLock) ForgetIp(ip);
             res.Cookie = CookieValue(Sessions.Create(_token, SessionTime), (int)SessionTime.TotalSeconds);
             _host.Log(what + " (" + ip + (local ? "" : ", aus dem Internet") + ")");
             res.Json(200, "{\"ok\":true}");
@@ -933,7 +945,7 @@ namespace WakeOnLan
                         return true;
                     }
                     _locked.Remove(ip);
-                    _fails.Remove(ip);
+                    ForgetIp(ip);
                 }
             }
             return false;
@@ -949,6 +961,7 @@ namespace WakeOnLan
                 _fails.TryGetValue(ip, out fails);
                 fails++;
                 _fails[ip] = fails;
+                _failSeen[ip] = DateTime.UtcNow;
                 if (fails >= MaxFails) _locked[ip] = DateTime.UtcNow + LockTime;
                 if (!local)
                 {
