@@ -58,6 +58,15 @@ namespace WakeOnLan
                 else MainForm.AfterUpdate = false;
             }
 
+            // "--aktualisieren [/tray]": Wake on LAN lief mit Administratorrechten und hat sich für das Update mit normalen
+            // Rechten neu gestartet – nach dem Start ohne weitere Rückfrage aktualisieren (löst nie einen weiteren Neustart aus)
+            if (args.Length >= 1 && args.Length <= 2 && string.Equals(args[0], "--aktualisieren", StringComparison.OrdinalIgnoreCase)
+                && (args.Length == 1 || args[1].Equals("/tray", StringComparison.OrdinalIgnoreCase)))
+            {
+                MainForm.InstallNow = true;
+                args = args.Length == 2 ? new[] { "/hintergrund" } : new string[0];
+            }
+
             var store = new DeviceStore();
 
             // Autostart: nur im Infobereich starten (Steuerung per Handy)
@@ -69,9 +78,9 @@ namespace WakeOnLan
             // Nur ein Fenster: läuft das Programm schon (auch versteckt im Infobereich), wird es nach vorne geholt
             bool first;
             _instance = new Mutex(true, "Local\\WakeOnLan.Fenster", out first);
-            if (!first && MainForm.AfterUpdate)
+            if (!first && (MainForm.AfterUpdate || MainForm.InstallNow))
             {
-                // Neustart nach dem Update: kurz warten, bis die alte Instanz ganz beendet ist (Einzelinstanz-Mutex)
+                // Neustart nach dem Update bzw. für das Update: kurz warten, bis die alte Instanz ganz beendet ist (Einzelinstanz-Mutex)
                 try { first = _instance.WaitOne(15000); }
                 catch (AbandonedMutexException) { first = true; }
             }

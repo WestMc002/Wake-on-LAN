@@ -171,7 +171,13 @@ BEDIENUNG
                              wenn diese Signatur gültig ist; sonst bietet es
                              nur die Release-Seite an.
                              Läuft Wake on LAN gerade mit Administratorrechten,
-                             wird nicht aktualisiert - bitte normal starten.
+                             startet es sich für das Update mit normalen
+                             Rechten neu und installiert dort (von Hand mit
+                             Rückfrage). Gibt es auf dem PC keine normalen
+                             Rechte (Benutzerkontensteuerung aus, eingebautes
+                             Konto "Administrator" auf Windows Server), wird
+                             mit Administratorrechten über einen geschützten
+                             Arbeitsordner aktualisiert.
                              Wurde ein Update unterbrochen (z. B. Absturz oder
                              Stromausfall), bietet "Jetzt aktualisieren" an,
                              die vorherige Version wiederherzustellen.
@@ -315,6 +321,14 @@ DATEIEN
 
 VERSIONEN
 ---------
+  1.77.2026.1127 Update aus einer Instanz mit Administratorrechten:
+                 - Wake on LAN startet sich für das Update mit normalen
+                   Rechten neu und installiert dann (von Hand mit
+                   Rückfrage, "Automatisch aktualisieren" ohne)
+                 - ohne normale Rechte (Benutzerkontensteuerung aus,
+                   eingebautes Administratorkonto) Update mit
+                   Administratorrechten über den geschützten Arbeitsordner;
+                   eine Wiederherstellung ist dort ebenfalls möglich
   1.76.2026.1126 Firewall und Prüfungen nach den Vorgaben vom 25.11.:
                  - Firewall-Freigabe ohne Internet-Zugriff nur für Heimnetz
                    und VPN, ohne Edge Traversal; zu weit gefasste Freigaben

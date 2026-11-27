@@ -50,6 +50,8 @@ namespace WakeOnLan
         public static bool AfterUpdate;
         /// <summary>Versuchskennung aus „--nach-update &lt;Kennung&gt;“ (ab 1.73), sonst null: Ergebnis aus der Datei dieses Versuchs.</summary>
         public static string UpdateAttemptId;
+        /// <summary>„--aktualisieren“: mit normalen Rechten neu gestartet, um das Update ohne weitere Rückfrage zu installieren.</summary>
+        public static bool InstallNow;
         private readonly System.Windows.Forms.Timer _navTimer = new System.Windows.Forms.Timer { Interval = 400 };
         private bool _navOpen;
 
@@ -573,6 +575,13 @@ namespace WakeOnLan
                     if (!Visible && _notifier != null) _notifier.Show(Ui.AppName, "Update nicht installiert – die bisherige Version läuft weiter.", ToolTipIcon.Warning);
                 }
             }
+            // „--aktualisieren“: gleich prüfen und installieren (ohne neue Rückfrage); Fehler werden gemeldet
+            if (InstallNow && !_demo && !UpdateCheck.IsElevated)
+                Post(async () =>
+                {
+                    await CheckForUpdates(true);
+                    if (_update != null && UpdateCheck.CanInstall(_update)) await InstallUpdate(true, true);
+                });
             // still kurz nach jedem Start (ca. 15 s, auch wenn das Programm nur im Infobereich startet), beim Start ohne
             // die 20-Stunden-Sperre; danach alle 6 Stunden nachsehen, ob die Prüfung fällig ist (läuft oft tagelang im Infobereich)
             bool atStart = true;
@@ -605,7 +614,7 @@ namespace WakeOnLan
                     try { _store.Save(); } catch { }
                     if (on && _update != null) TryAutoUpdate(); // schon eine neue Version bekannt: gleich versuchen
                 },
-                CanInstall = () => UpdateCheck.CanInstall(_update) || (_update != null && UpdateCheck.RepairPending),
+                CanInstall = () => UpdateCheck.CanInstall(_update) || (_update != null && UpdateCheck.RepairPending) || (!InstallNow && UpdateCheck.OnlyElevationBlocks(_update)),
                 Install = () => Post(() => { var t = InstallUpdate(); }), // erst nach dem Schließen des Info-Fensters
                 OpenPage = OpenReleasePage
             };
@@ -649,7 +658,7 @@ namespace WakeOnLan
                     _update = release;
                     ShowUpdateBar(true);
                     // „Automatisch aktualisieren“: ohne Rückfrage installieren, sobald nichts mehr läuft (nicht bei „Jetzt prüfen“)
-                    if (_store.UpdateAutoInstall && !manual && UpdateCheck.CanInstall(release))
+                    if (_store.UpdateAutoInstall && !manual && (UpdateCheck.CanInstall(release) || (!InstallNow && UpdateCheck.OnlyElevationBlocks(release))))
                     {
                         Post(TryAutoUpdate);
                         return UpdateState();
@@ -697,8 +706,10 @@ namespace WakeOnLan
                     blocker = "Wake on LAN installiert dieses Update nicht: " + _update.Problem + " " + _update.ProblemDetail + " Die Release-Seite ist trotzdem erreichbar.";
                 // nicht abgeschlossenes Update: „Jetzt aktualisieren“ bietet die Wiederherstellung an
                 bool repair = blocker == UpdateCheck.PendingText;
-                _updateBar.Install.Enabled = UpdateCheck.CanInstall(_update) || repair;
+                bool restart = !InstallNow && UpdateCheck.OnlyElevationBlocks(_update);
+                _updateBar.Install.Enabled = UpdateCheck.CanInstall(_update) || repair || restart;
                 if (repair) blocker += " Ein Klick stellt die vorherige Version wieder her.";
+                if (restart) blocker = "Wake on LAN läuft mit Administratorrechten: Ein Klick startet es mit normalen Rechten neu und installiert dann das Update.";
                 _tip.SetToolTip(_updateBar.Install, blocker ?? (string.IsNullOrEmpty(_update.ZipUrl) ? "Im Release ist keine passende ZIP-Datei." :
                     "ZIP herunterladen, Programm beenden, EXE und Liesmich ersetzen und neu starten.\r\nGeräteliste, Zeitpläne und Einstellungen bleiben erhalten."));
                 _tip.SetToolTip(_updateBar, string.IsNullOrEmpty(_update.Notes) ? "Die Änderungen stehen auf der Release-Seite." : "Änderungen:\r\n" + _update.Notes);
@@ -740,7 +751,10 @@ namespace WakeOnLan
         private void TryAutoUpdate()
         {
             if (_update == null || _installing || _demo || !_store.UpdateAutoInstall || !_store.UpdateCheck) return;
-            if (!UpdateCheck.CanInstall(_update) || UpdateCheck.Busy) return;
+            // läuft Wake on LAN mit Administratorrechten: mit normalen Rechten neu starten und dort installieren
+            // (nie nach „--aktualisieren“, damit sich nichts im Kreis startet)
+            bool restart = !InstallNow && UpdateCheck.OnlyElevationBlocks(_update);
+            if (!restart && (!UpdateCheck.CanInstall(_update) || UpdateCheck.Busy)) return;
             if (BusyForUpdate())
             {
                 if (!_autoUpdateHooked)
@@ -752,12 +766,19 @@ namespace WakeOnLan
                 _autoUpdateRetry.Start();
                 return;
             }
+            if (restart)
+            {
+                if (UpdateCheck.RestartUnelevated(!Visible)) { _exit = true; Close(); }
+                return;
+            }
             Post(() => { var t = InstallUpdate(true); });
         }
 
-        private Task InstallUpdate() { return InstallUpdate(false); }
+        private Task InstallUpdate() { return InstallUpdate(false, false); }
+        private Task InstallUpdate(bool automatic) { return InstallUpdate(automatic, false); }
 
-        private async Task InstallUpdate(bool automatic)
+        /// <param name="report">Fehler melden, auch ohne Rückfrage (nach „--aktualisieren“ wollte der Benutzer das Update ausdrücklich).</param>
+        private async Task InstallUpdate(bool automatic, bool report)
         {
             if (_update == null || _installing) return;
             var info = _update;
@@ -777,6 +798,20 @@ namespace WakeOnLan
                     Close();
                 }
                 return;
+            }
+            if (!automatic && !InstallNow && UpdateCheck.OnlyElevationBlocks(info))
+            {
+                // nicht mit Administratorrechten aktualisieren, sondern mit normalen Rechten neu starten und dort installieren
+                if (MessageBox.Show(this, "Wake on LAN läuft gerade mit Administratorrechten. Für das Update startet Wake on LAN mit normalen Rechten neu " +
+                    "und installiert dann Version " + info.Version + ".\r\nGeräteliste, Zeitpläne und Einstellungen bleiben erhalten.\r\n\r\nJetzt aktualisieren?",
+                    "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                if (UpdateCheck.RestartUnelevated(!Visible))
+                {
+                    _exit = true; // die neue Instanz wartet auf die Einzelinstanz-Sperre und installiert dann
+                    Close();
+                    return;
+                }
+                // Neustart nicht möglich: wie bisher auf den normalen Start verweisen (Meldung unten)
             }
             if (!automatic && !UpdateCheck.CanInstall(info))
             {
@@ -816,6 +851,9 @@ namespace WakeOnLan
                     _updateBar.Install.Enabled = UpdateCheck.CanInstall(info) || UpdateCheck.RepairPending;
                     _installing = false;
                     History.Add("Wake on LAN", "Automatisches Update fehlgeschlagen: " + ex.Message);
+                    if (report)
+                        MessageBox.Show(this, "Update nicht installiert – Wake on LAN läuft in der bisherigen Version weiter.\r\n\r\n" + ex.Message,
+                            "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 MessageBox.Show(this, ex.Message, "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
